@@ -1,0 +1,8 @@
+-r base.txt
+
+# Observability
+sentry-sdk[fastapi]==2.58.0
+prometheus-client==0.25.0
+
+# Production ASGI server
+gunicorn==25.3.0

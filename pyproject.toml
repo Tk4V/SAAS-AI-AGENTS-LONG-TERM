@@ -1,0 +1,87 @@
+[project]
+name = "clyde-ai"
+version = "0.1.0"
+description = "Agent Engine — virtual dev team that plans, writes and ships code across multiple repositories."
+readme = "PROJECT_BRIEF.md"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = [
+    ".venv",
+    "src/db/migrations/versions",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "ASYNC",
+    "RUF",
+]
+ignore = [
+    "E501",   # line length is enforced by the formatter
+    "B008",   # FastAPI dependencies use Depends(...) in defaults by design
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ARG001"]
+"src/db/migrations/*" = ["E", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_decorators = false
+plugins = ["pydantic.mypy"]
+exclude = [
+    "src/db/migrations/versions/",
+    "tests/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "voyageai.*",
+    "docker.*",
+    "github.*",
+    "pgvector.*",
+    "langgraph.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests that hit a real database or external service",
+    "slow: tests that take noticeable wall time",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "src/db/migrations/*",
+    "src/api/app.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 0

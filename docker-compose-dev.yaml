@@ -1,0 +1,22 @@
+# Staging-like environment. Points at dev RDS via .env.
+name: clyde-ai-dev
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REQUIREMENTS: prod
+    container_name: clyde_app_dev
+    restart: unless-stopped
+    user: root
+    env_file:
+      - .env
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

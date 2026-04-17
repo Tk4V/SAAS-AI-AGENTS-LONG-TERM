@@ -1,0 +1,32 @@
+# Production deployment on AWS. Postgres lives on RDS, so it is not declared here.
+# In real deployments the image is pushed to ECR and run on ECS or Fargate;
+# this file exists as a reference for running the same image with plain Docker Compose
+# (for example on EC2 or for prod-like sanity checks on a developer machine).
+name: clyde-ai-prod
+
+services:
+  app:
+    image: ${IMAGE:-clyde-ai:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REQUIREMENTS: prod
+    container_name: clyde_app_prod
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M

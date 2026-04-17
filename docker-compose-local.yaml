@@ -1,0 +1,44 @@
+# Just Postgres with pgvector, for engineers running the app directly from the IDE.
+# The "migrate" service runs on demand via the "migrate" profile and exits after
+# applying pending Alembic migrations against the local database.
+name: clyde-ai-local
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: clyde_postgres_local
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-clyde}
+      POSTGRES_USER: ${POSTGRES_USER:-clyde}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clyde}
+    ports:
+      - "5432:5432"
+    volumes:
+      - clyde_pg_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clyde}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REQUIREMENTS: dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-clyde}
+      DB_USER: ${POSTGRES_USER:-clyde}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-clyde}
+    command: ["alembic", "upgrade", "head"]
+    profiles: ["migrate"]
+
+volumes:
+  clyde_pg_local:
