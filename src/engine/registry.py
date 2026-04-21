@@ -76,7 +76,7 @@ class AgentRegistry:
     def all(self) -> dict[str, type["BaseAgent"]]:
         return dict(self._agents)
 
-    def autoload(self, package_name: str = "src.agents.development_team") -> None:
+    def autoload(self, package_name: str = "src.agents.Development_team") -> None:
         """Walk the given package and import each `agent.py` module.
 
         Importing the module triggers the `@registry.register` decorator on
