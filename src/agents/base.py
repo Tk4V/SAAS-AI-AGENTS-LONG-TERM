@@ -4,7 +4,7 @@ Agents are the unit of work the engine schedules. Each agent receives the
 current task state, performs its slice of work and returns a state diff that
 LangGraph merges back into the global state.
 
-Concrete agents live in `src/agents/Development_team/<role>/agent.py` and
+Concrete agents live in `src/agents/development_team/<role>/agent.py` and
 register themselves with `AgentRegistry`.
 """
 
