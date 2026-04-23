@@ -2,13 +2,10 @@
 
 GitHub sends a `workflow_run` webhook when a CI run completes. This service
 verifies the HMAC-SHA256 signature, locates the Clyde task that owns the
-branch, and either marks it complete or spawns the DevOps Engineer agent to
-attempt a fix.
+branch, and either marks it complete or transitions to NEEDS_HUMAN.
 
-The fix loop is intentionally simple: we run the DevOps agent directly
-(outside the LangGraph pipeline) and then transition the task back to
-AWAITING_CI. The next webhook will either succeed or trigger another fix
-attempt until MAX_FIX_ATTEMPTS is exhausted.
+The fix handler is currently a stub that marks the task as NEEDS_HUMAN
+(M2 will use Developer agent to attempt automated fixes).
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ import structlog
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.development_team.devops_engineer.agent import DevOpsEngineerAgent
 from src.api.schemas.webhook_schemas import GitHubWorkflowRunPayload
 from src.config import Settings, get_settings
 from src.config.constants import (
@@ -36,7 +32,7 @@ from src.db.session import Database, db
 from src.engine.broadcaster import broadcaster
 
 
-# Branch names created by Release Manager follow this pattern:
+# Branch names created by Developer agent follow this pattern:
 #   clyde/{task_id[:8]}/{repo_name}
 _BRANCH_PATTERN = re.compile(r"^clyde/(?P<prefix>[0-9a-f]{8})/(?P<repo>.+)$")
 
@@ -175,7 +171,7 @@ class WebhookService:
                 await broadcaster.close_task(task.id)
                 return
 
-            # Transition to FIXING and spawn the DevOps Engineer in the background.
+            # Transition to FIXING and spawn the fix handler in the background.
             await repo.update_status(task=task, status=TaskStatus.FIXING)
             log.info("webhook.spawning_fix", attempt=task.attempt + 1)
 
@@ -211,74 +207,36 @@ class WebhookService:
         ci_run_id: int,
         ci_repo_full_name: str,
     ) -> None:
-        """Background coroutine that runs the DevOps Engineer agent directly.
+        """Background coroutine that handles a CI failure (currently a stub).
 
         Owns its own DB session so the request session closing doesn't affect it.
-        On success the task transitions to AWAITING_CI (the push triggers CI
-        again). On failure it transitions to FAILED.
+        Currently marks the task as NEEDS_HUMAN; M2 will use Developer agent to
+        attempt an automated fix.
         """
         log = self._logger.bind(task_id=str(task_id), attempt=attempt + 1)
         log.info("devops_fix.started")
 
         try:
-            agent = DevOpsEngineerAgent()
-
-            # Build a minimal state dict with everything the agent needs.
-            state: dict[str, Any] = {
-                **task_state,
-                "task_id": str(task_id),
-                "user_id": user_id,
-                "attempt": attempt,
-                "ci_run_id": ci_run_id,
-                "ci_repo_full_name": ci_repo_full_name,
-                "max_fix_attempts": self._settings.max_fix_attempts,
-            }
-
-            result = await agent(state)
-
-            # Persist the updated state and transition back to AWAITING_CI.
+            # CI fix loop deferred to M2. For now, mark as needs_human.
+            log.info("devops_fix.skipped_no_agent")
             async with self._database.session_scope() as session:
                 repo = TaskRepository(session)
                 task = await repo.get(user_id=user_id, task_id=task_id)
                 await repo.update_status(
                     task=task,
-                    status=TaskStatus.AWAITING_CI,
-                    attempt=result.get("attempt", attempt + 1),
-                    state_patch={
-                        "diffs": result.get("diffs", {}),
-                        "attempt": result.get("attempt", attempt + 1),
-                    },
+                    status=TaskStatus.NEEDS_HUMAN,
+                    error_message="CI failed. Automated fix not yet available.",
                 )
-
             await broadcaster.publish(task_id, {
                 "name": WS_EVENT_TASK_STATUS_CHANGED,
                 "agent": None,
-                "payload": {"status": TaskStatus.AWAITING_CI.value},
+                "payload": {"status": TaskStatus.NEEDS_HUMAN.value},
                 "occurred_at": "",
             })
-
-            log.info("devops_fix.completed")
+            await broadcaster.close_task(task_id)
 
         except Exception as exc:
             log.exception("devops_fix.failed", error=str(exc))
-            try:
-                async with self._database.session_scope() as session:
-                    repo = TaskRepository(session)
-                    task = await repo.get(user_id=user_id, task_id=task_id)
-                    await repo.update_status(
-                        task=task,
-                        status=TaskStatus.FAILED,
-                        error_message=f"DevOps fix failed: {str(exc)[:500]}",
-                    )
-            except Exception:
-                log.exception("devops_fix.status_update_failed")
-
-            await broadcaster.publish(task_id, {
-                "name": WS_EVENT_TASK_STATUS_CHANGED,
-                "agent": None,
-                "payload": {"status": TaskStatus.FAILED.value},
-                "occurred_at": "",
-            })
             await broadcaster.close_task(task_id)
 
 

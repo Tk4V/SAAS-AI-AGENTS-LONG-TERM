@@ -208,6 +208,34 @@ class GitHubProvider(GitProvider):
             base_branch=data["base"]["ref"],
         )
 
+    async def find_open_pr(
+        self,
+        *,
+        coordinates: RepoCoordinates,
+        token: str,
+        head: str,
+    ) -> PullRequestInfo | None:
+        """Check if an open PR already exists for the given head branch."""
+        url = (
+            f"{self._settings.github_api_base}/repos/{coordinates.full_name}/pulls"
+            f"?head={coordinates.owner}:{head}&state=open"
+        )
+        response = await self._retry.run(
+            self._http.get, url, headers=self._auth_headers(token),
+        )
+        if response.status_code >= 400:
+            return None
+        data = response.json()
+        if data:
+            pr = data[0]
+            return PullRequestInfo(
+                number=pr["number"],
+                url=pr["html_url"],
+                head_branch=pr["head"]["ref"],
+                base_branch=pr["base"]["ref"],
+            )
+        return None
+
     async def fetch_workflow_run_logs(
         self,
         *,

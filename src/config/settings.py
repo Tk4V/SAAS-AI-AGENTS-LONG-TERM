@@ -33,8 +33,6 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     debug: bool = False
 
-    host: str = "0.0.0.0"  # noqa: S104
-    port: int = 8000
     api_prefix: str = "/api/v1"
     allowed_origins_raw: str = Field(
         default="http://localhost:3000",
@@ -63,7 +61,7 @@ class Settings(BaseSettings):
     anthropic_model_opus: str = "claude-opus-4-6"
     anthropic_model_sonnet: str = "claude-sonnet-4-6"
     anthropic_model_haiku: str = "claude-haiku-4-5"
-    anthropic_max_tokens: int = 8192
+    anthropic_max_tokens: int = 16384
 
     voyage_api_key: SecretStr = SecretStr("")
     voyage_model: str = "voyage-3-large"
@@ -78,24 +76,15 @@ class Settings(BaseSettings):
     oauth_callback_base_url: str = "http://localhost:8000"
     frontend_redirect_url: str = "http://localhost:3000/integrations"
 
-    langchain_tracing_v2: bool = False
-    langchain_api_key: SecretStr = SecretStr("")
-    langchain_project: str = "clyde-ai"
-    langchain_endpoint: str = "https://api.smith.langchain.com"
-
     sandbox_timeout_sec: int = 300
     sandbox_memory_limit: str = "2g"
     sandbox_cpu_limit: float = 1.0
     sandbox_network: str = "none"
 
     max_fix_attempts: int = 3
-    max_review_iterations: int = 3
     max_qa_iterations: int = 3
 
     fernet_key: SecretStr = SecretStr("")
-
-    sentry_dsn: str | None = None
-    prometheus_enabled: bool = False
 
     @property
     def allowed_origins(self) -> list[str]:

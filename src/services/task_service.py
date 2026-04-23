@@ -85,9 +85,9 @@ class TaskService:
         """Resume a failed task from its last checkpoint.
 
         LangGraph saves state after every successful agent step. When the
-        pipeline failed at, say, Release Manager — this method re-enters
-        the graph at that exact point without re-running Tech Lead, Architect,
-        Senior Developer, etc. Only the failed step and everything after it
+        pipeline failed at, say, Developer agent — this method re-enters
+        the graph at that exact point without re-running earlier agents.
+        Only the failed step and everything after it
         is re-executed.
 
         Falls back to a full restart if no checkpoint exists.
@@ -105,6 +105,9 @@ class TaskService:
             status=TaskStatus.RUNNING,
             error_message=None,
         )
+
+        # Re-fetch to ensure all attributes are loaded (updated_at changed by DB trigger)
+        task = await self._repo.get(user_id=user_id, task_id=task_id)
 
         asyncio.create_task(
             self._resume_pipeline_background(
@@ -165,7 +168,6 @@ class TaskService:
         affect it. Catches all exceptions and transitions the task to an
         appropriate terminal status.
         """
-        from src.config import get_settings
         from src.engine import runtime
 
         log = self._logger.bind(task_id=str(task_id))
@@ -183,8 +185,6 @@ class TaskService:
 
             if pr_urls:
                 new_status = TaskStatus.AWAITING_CI
-            elif self._is_exhausted(persisted_state, get_settings()):
-                new_status = TaskStatus.NEEDS_HUMAN
             else:
                 new_status = TaskStatus.COMPLETED
 
@@ -238,6 +238,7 @@ class TaskService:
         *,
         task_id: UUID,
         user_id: int,
+        patch: dict[str, Any] | None = None,
     ) -> None:
         """Resume a pipeline from its last LangGraph checkpoint.
 
@@ -245,8 +246,9 @@ class TaskService:
         `executor.resume(task_id)` re-enters the graph at the node that
         failed (or the next unexecuted node), skipping all the agents that
         already ran successfully. This typically saves minutes of LLM calls.
+
+        `patch` allows injecting state changes before resuming.
         """
-        from src.config import get_settings
         from src.engine import runtime
 
         log = self._logger.bind(task_id=str(task_id))
@@ -291,7 +293,7 @@ class TaskService:
 
             log.info("pipeline.resume.checkpoint_found", state_keys=list(existing_state.keys()))
             final_state: dict[str, Any] = {}
-            async for event in executor.resume(task_id=task_id):
+            async for event in executor.resume(task_id=task_id, patch=patch):
                 final_state = event
                 await broadcaster.publish(task_id, event)
 
@@ -339,12 +341,3 @@ class TaskService:
                     )
             except Exception:
                 log.exception("pipeline.resume.status_update_failed")
-
-    @staticmethod
-    def _is_exhausted(state: dict[str, Any], settings: Any) -> bool:
-        review_it = int(state.get("review_iteration") or 0)
-        qa_it = int(state.get("qa_iteration") or 0)
-        return (
-            review_it >= settings.max_review_iterations
-            or qa_it >= settings.max_qa_iterations
-        )

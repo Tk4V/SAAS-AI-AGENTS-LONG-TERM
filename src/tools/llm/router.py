@@ -1,14 +1,4 @@
-"""Picks the right Anthropic model for each agent role.
-
-The mapping reflects the M1 cost/quality trade-off agreed at kickoff:
-- Tech Lead and Architect plan; they get Opus for the strongest reasoning.
-- Senior Developer, Code Reviewer, QA Engineer and DevOps Engineer all
-  produce or consume code; Sonnet is the default sweet spot.
-- Release Manager writes PR descriptions; Haiku is plenty.
-
-If a role is not in the table the router falls back to Sonnet, which keeps
-adding new agents safe by default.
-"""
+"""Picks the right Anthropic model for each agent role."""
 
 from __future__ import annotations
 
@@ -24,25 +14,14 @@ class UnknownModelAliasError(AppError):
 
 
 class ModelRouter:
-    """Maps an agent role to a concrete Anthropic model id."""
 
     DEFAULT_ROLE_TO_ALIAS: ClassVar[dict[str, str]] = {
-        "tech_lead": "opus",
-        "architect": "opus",
-        "senior_developer": "sonnet",
-        "code_reviewer": "sonnet",
+        "developer": "sonnet",
+        "publisher": "haiku",
         "qa_engineer": "sonnet",
-        "devops_engineer": "sonnet",
-        "release_manager": "haiku",
     }
 
-    def __init__(
-        self,
-        *,
-        settings: Settings | None = None,
-        role_to_alias: dict[str, str] | None = None,
-        fallback_alias: str = "sonnet",
-    ) -> None:
+    def __init__(self, *, settings: Settings | None = None, role_to_alias: dict[str, str] | None = None, fallback_alias: str = "sonnet") -> None:
         self._settings = settings or get_settings()
         self._role_to_alias = role_to_alias or dict(self.DEFAULT_ROLE_TO_ALIAS)
         self._fallback_alias = fallback_alias
@@ -59,6 +38,4 @@ class ModelRouter:
                 return self._settings.anthropic_model_sonnet
             case "haiku":
                 return self._settings.anthropic_model_haiku
-        raise UnknownModelAliasError(
-            f"Unknown model alias {alias!r}; expected one of opus, sonnet, haiku.",
-        )
+        raise UnknownModelAliasError(f"Unknown model alias {alias!r}.")

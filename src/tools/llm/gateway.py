@@ -18,9 +18,36 @@ ChatRole = Literal["user", "assistant"]
 
 
 @dataclass(frozen=True, slots=True)
+class ToolDefinition:
+    """A tool the LLM can call during a conversation."""
+
+    name: str
+    description: str
+    input_schema: dict
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """A tool invocation requested by the LLM."""
+
+    id: str
+    name: str
+    input: dict
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResult:
+    """The result of executing a tool, sent back to the LLM."""
+
+    tool_use_id: str
+    content: str
+    is_error: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ChatMessage:
     role: ChatRole
-    content: str
+    content: str | list  # str for text, list for tool_use/tool_result blocks
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,12 +61,27 @@ class TokenUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class CacheStats:
+    """Tracks Anthropic prompt-caching token counts."""
+
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+    @property
+    def total_cached(self) -> int:
+        return self.cache_creation_input_tokens + self.cache_read_input_tokens
+
+
+@dataclass(frozen=True, slots=True)
 class ChatResponse:
     text: str
     model: str
     usage: TokenUsage
     stop_reason: str | None = None
     raw: dict = field(default_factory=dict)
+    cache_stats: CacheStats = field(default_factory=CacheStats)
+    thinking_text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 class LLMGateway(ABC):
@@ -54,6 +96,9 @@ class LLMGateway(ABC):
         messages: list[ChatMessage],
         max_tokens: int | None = None,
         temperature: float | None = None,
+        thinking: bool = False,
+        thinking_budget: int = 4096,
+        tools: list[ToolDefinition] | None = None,
     ) -> ChatResponse:
         """Single-shot completion. `role` selects the underlying model alias."""
 

@@ -8,7 +8,6 @@ from src.engine.executor import (
 )
 from src.engine.graph_builder import PipelineBuildError, PipelineGraphBuilder
 from src.engine.registry import AgentRegistrationError, AgentRegistry
-from src.engine.routers import ReviewRouter, TestRouter
 from src.engine.state import (
     CodeChange,
     PipelineEvent,
@@ -30,10 +29,8 @@ __all__ = [
     "PipelineExecutor",
     "PipelineGraphBuilder",
     "RepoSnapshot",
-    "ReviewRouter",
     "SandboxOutcome",
     "TaskState",
-    "TestRouter",
     "broadcaster",
     "runtime",
 ]

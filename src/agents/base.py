@@ -1,9 +1,5 @@
 """Base class every agent in the dev team inherits from.
 
-Agents are the unit of work the engine schedules. Each agent receives the
-current task state, performs its slice of work and returns a state diff that
-LangGraph merges back into the global state.
-
 Concrete agents live in `src/agents/development_team/<role>/agent.py` and
 register themselves with `AgentRegistry`.
 """
@@ -25,11 +21,6 @@ if TYPE_CHECKING:
 
 
 class BaseAgent(ABC):
-    """Abstract base for every dev-team agent.
-
-    Subclasses must define `name` (machine identifier used by the registry and
-    LangGraph nodes) and `role` (human-readable label shown to the user).
-    """
 
     name: ClassVar[str]
     role: ClassVar[str]
@@ -42,12 +33,6 @@ class BaseAgent(ABC):
         return self._logger
 
     async def __call__(self, state: "TaskState") -> dict[str, Any]:
-        """LangGraph nodes are plain callables; this delegates to `execute`.
-
-        The wrapper exists so that subclasses only override `execute`, while
-        cross-cutting concerns (logging, event emission, error handling) live
-        here in one place.
-        """
         self._logger.info(
             "agent.started",
             task_id=state.get("task_id"),
@@ -72,13 +57,7 @@ class BaseAgent(ABC):
         database: Database | None = None,
         cipher: TokenCipher | None = None,
     ) -> str:
-        """Fetch and decrypt the user's GitHub OAuth token from the database.
-
-        Shared by every agent that needs to interact with GitHub (Tech Lead for
-        cloning, Release Manager for pushing, DevOps for fetching CI logs). The
-        token lives only in the local variable scope and never enters the
-        LangGraph state.
-        """
+        """Fetch and decrypt the user's GitHub OAuth token."""
         from src.tools import toolbox
 
         _db = database or db
