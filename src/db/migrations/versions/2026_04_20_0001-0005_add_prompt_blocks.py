@@ -23,6 +23,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    table_exists = conn.execute(
+        sa.text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = 'prompt_blocks')"
+        )
+    ).scalar()
+    if table_exists:
+        return
+
     prompt_blocks = op.create_table(
         "prompt_blocks",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
