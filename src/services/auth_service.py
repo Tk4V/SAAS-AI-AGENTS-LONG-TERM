@@ -34,6 +34,7 @@ class CurrentUser:
     id: int
     username: str | None = None
     email: str | None = None
+    org_id: int | None = None
     raw_claims: dict[str, Any] = field(default_factory=dict)
 
 
@@ -88,9 +89,11 @@ class AuthService:
         if not isinstance(user_id, int):
             raise AuthenticationError("Token is missing the user_id claim.")
 
+        org_id = claims.get("org_id")
         return CurrentUser(
             id=user_id,
             username=claims.get("username"),
             email=claims.get("email"),
+            org_id=int(org_id) if org_id is not None else None,
             raw_claims=claims,
         )
