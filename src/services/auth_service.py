@@ -86,8 +86,12 @@ class AuthService:
         claims = self.decode_token(token)
 
         user_id = claims.get("user_id")
-        if not isinstance(user_id, int):
+        if user_id is None:
             raise AuthenticationError("Token is missing the user_id claim.")
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            raise AuthenticationError("Token user_id claim is not a valid integer.")
 
         org_id = claims.get("org_id")
         return CurrentUser(
