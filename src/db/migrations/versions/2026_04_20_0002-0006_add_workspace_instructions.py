@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0006_workspace_instructions"
@@ -46,6 +47,17 @@ _CODE_REVIEWER_PREPEND = (
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    # guard: skip if workspace instructions were already applied
+    already = conn.execute(
+        sa.text(
+            "SELECT 1 FROM prompt_blocks "
+            "WHERE key = 'tech_lead_role' AND content LIKE '%%.clyde/context.md%%'"
+        )
+    ).scalar()
+    if already:
+        return
+
     # Tech Lead: append workspace instructions at the end
     op.execute(
         "UPDATE prompt_blocks "

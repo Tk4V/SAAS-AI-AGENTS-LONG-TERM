@@ -37,6 +37,13 @@ def upgrade() -> None:
         "Always verify after editing. Call done() when finished."
     )
 
+    conn = op.get_bind()
+    exists = conn.execute(
+        sa.text("SELECT 1 FROM prompt_blocks WHERE key = 'developer_role'")
+    ).scalar()
+    if exists:
+        return
+
     op.bulk_insert(prompt_blocks, [{
         "id": str(uuid4()), "key": "developer_role", "content": content,
         "category": "role", "agent_role": "developer", "priority": 5, "is_active": True,

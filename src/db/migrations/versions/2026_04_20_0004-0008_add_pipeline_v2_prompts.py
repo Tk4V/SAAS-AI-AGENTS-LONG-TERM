@@ -62,6 +62,13 @@ def upgrade() -> None:
         "Reply with a JSON object. No prose outside the JSON."
     )
 
+    conn = op.get_bind()
+    exists = conn.execute(
+        sa.text("SELECT 1 FROM prompt_blocks WHERE key = 'researcher_role'")
+    ).scalar()
+    if exists:
+        return
+
     op.bulk_insert(prompt_blocks, [
         {"id": str(uuid4()), "key": "researcher_role", "content": researcher_content, "category": "role", "agent_role": "researcher", "priority": 5, "is_active": True},
         {"id": str(uuid4()), "key": "planner_role", "content": planner_content, "category": "role", "agent_role": "planner", "priority": 5, "is_active": True},

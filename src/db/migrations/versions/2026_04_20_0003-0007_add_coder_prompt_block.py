@@ -55,6 +55,13 @@ def upgrade() -> None:
         "- Focus only on what the task asks for. No scope creep."
     )
 
+    conn = op.get_bind()
+    exists = conn.execute(
+        sa.text("SELECT 1 FROM prompt_blocks WHERE key = 'coder_role'")
+    ).scalar()
+    if exists:
+        return
+
     op.bulk_insert(
         prompt_blocks,
         [
