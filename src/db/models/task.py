@@ -27,6 +27,7 @@ class TaskStatus(str, enum.Enum):
     """
 
     RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
     AWAITING_CI = "awaiting_ci"
     FIXING = "fixing"
     COMPLETED = "completed"
@@ -51,7 +52,7 @@ class Task(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
         index=True,
     )
 
-    # Number of fix attempts already consumed by the DevOps loop. Capped by
+    # Number of fix attempts already consumed by the webhook CI handler. Capped by
     # settings.max_fix_attempts before transitioning to NEEDS_HUMAN.
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -59,7 +60,7 @@ class Task(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
     # webhook arrives or after a process restart.
     state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
-    # URLs of pull requests created by Release Manager, keyed by repo full name.
+    # URLs of pull requests created by Publisher agent, keyed by repo full name.
     # Shape: {"owner/repo": "https://github.com/owner/repo/pull/123"}.
     pr_urls: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False, default=dict)
 

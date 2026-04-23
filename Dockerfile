@@ -34,15 +34,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app
 
-# Runtime libraries only — no compilers in the final image.
+# Runtime libraries + Node.js (required by Claude Agent SDK).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libpq5 \
         git \
         curl \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --create-home --shell /bin/bash app
+
+# Install Claude Code CLI globally (Agent SDK requires it)
+RUN npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || true
 
 COPY --from=builder /opt/venv /opt/venv
 

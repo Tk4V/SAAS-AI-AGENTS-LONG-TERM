@@ -7,7 +7,6 @@ agent uses an LLM call to analyse the failure output and the verdict is "fail".
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,10 +17,14 @@ from src.agents.base import BaseAgent
 from src.agents.development_team.qa_engineer.prompts import (
     FAILURE_ANALYSIS_TEMPLATE,
     SYSTEM_PROMPT,
+    TOOL_LOOP_INITIAL_MESSAGE,
 )
+from src.engine.prompt_assembler import PromptAssembler
 from src.config.constants import QA_RESULT_FAIL, QA_RESULT_PASS
 from src.engine.registry import AgentRegistry
+from src.engine.tool_loop import AgentToolExecutor, ToolLoop
 from src.tools import toolbox
+from src.tools.agent_toolkit import AgentToolkit
 from src.tools.llm.gateway import ChatMessage, LLMGateway
 from src.tools.sandbox.runner import SandboxRunner
 
@@ -51,6 +54,7 @@ class QAEngineerAgent(BaseAgent):
     async def execute(self, state: "TaskState") -> dict[str, Any]:
         repos = state.get("repos") or []
         diffs = state.get("diffs") or {}
+        description = state.get("description") or ""
         iteration = int(state.get("qa_iteration") or 0)
 
         if not repos:
@@ -60,6 +64,15 @@ class QAEngineerAgent(BaseAgent):
         repos_to_test = [r for r in repos if r.get("name") in diffs]
         if not repos_to_test:
             repos_to_test = repos
+
+        # Run pre-sandbox recon: read test files to understand structure.
+        # This is best-effort -- if it fails we still run the tests.
+        for repo in repos_to_test:
+            await self._recon_test_structure(
+                description=description,
+                diffs=diffs,
+                repo=repo,
+            )
 
         qa_results: dict[str, Any] = {}
         all_passed = True
@@ -107,7 +120,7 @@ class QAEngineerAgent(BaseAgent):
                     exit_code=result.exit_code,
                 )
                 # Ask the LLM to analyse the failure so the feedback is useful
-                # when the pipeline loops back to Senior Developer.
+                # when the pipeline loops back to Developer agent.
                 analysis = await self._analyse_failure(
                     repo_name=repo_name, result=result
                 )
@@ -132,6 +145,82 @@ class QAEngineerAgent(BaseAgent):
             "qa_iteration": new_iteration,
             "events": [event],
         }
+
+    # ------------------------------------------------------------------
+    # Pre-sandbox test structure recon (read-only tool loop)
+    # ------------------------------------------------------------------
+
+    async def _recon_test_structure(
+        self,
+        *,
+        description: str,
+        diffs: dict[str, Any],
+        repo: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Use read-only tools to understand the test layout before running tests.
+
+        Returns the recon summary dict or None if it fails. This is purely
+        informational for now -- it helps the LLM provide better failure
+        analysis later by knowing the test structure upfront.
+        """
+        try:
+            repo_name = repo.get("name", "")
+            local_path = repo.get("local_path", "")
+            if not repo_name or not local_path:
+                return None
+
+            repo_path = Path(local_path)
+            toolkit = AgentToolkit(repo_paths={repo_name: repo_path})
+            executor = AgentToolExecutor(
+                toolkit=toolkit,
+                repo_name=repo_name,
+                repo_path=repo_path,
+            )
+            loop = ToolLoop(
+                llm=self._llm,
+                executor=executor,
+                role="qa_engineer",
+                tools=AgentToolExecutor.read_only_definitions(),
+                max_turns=8,  # keep it short -- this is just recon
+            )
+
+            # Build changed files list
+            changed = diffs.get(repo_name, [])
+            changed_files = ", ".join(c.get("path", "") for c in changed) or "(none)"
+
+            initial_msg = TOOL_LOOP_INITIAL_MESSAGE.format(
+                description=description,
+                changed_files=changed_files,
+                repo_name=repo_name,
+                repo_path=local_path,
+            )
+
+            system = await PromptAssembler.for_role("qa_engineer")
+            result = await loop.run(
+                system=system,
+                initial_message=initial_msg,
+            )
+
+            self.logger.info(
+                "qa_engineer.recon_done",
+                repo=repo_name,
+                turns=result.turns_used,
+            )
+
+            if result.text:
+                from src.common.json_utils import parse_llm_json
+                try:
+                    return parse_llm_json(result.text, agent="QA Engineer")
+                except Exception:
+                    return None
+            return None
+
+        except Exception as exc:
+            self.logger.warning(
+                "qa_engineer.recon_failed",
+                error=str(exc),
+            )
+            return None
 
     async def _analyse_failure(
         self,

@@ -98,6 +98,16 @@ class GitProvider(ABC):
         """Open a PR and return its number plus URL."""
 
     @abstractmethod
+    async def find_open_pr(
+        self,
+        *,
+        coordinates: RepoCoordinates,
+        token: str,
+        head: str,
+    ) -> PullRequestInfo | None:
+        """Check if an open PR already exists for the given head branch."""
+
+    @abstractmethod
     async def fetch_workflow_run_logs(
         self,
         *,

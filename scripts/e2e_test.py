@@ -139,7 +139,10 @@ async def pick_repo(http: httpx.AsyncClient, headers: dict) -> dict:
     default_branch = selected["default_branch"]
     branch_input = input(f"  Branch [{default_branch}]: ").strip()
     if branch_input:
-        selected["default_branch"] = branch_input
+        # Strip any non-ASCII garbage that terminal input can introduce
+        branch_input = branch_input.encode("ascii", errors="ignore").decode("ascii").strip()
+        if branch_input:
+            selected["default_branch"] = branch_input
 
     log(f"Selected: {selected['full_name']} (branch: {selected['default_branch']})")
     return selected
@@ -209,6 +212,7 @@ async def run(args: argparse.Namespace) -> None:
 
         # 6. Poll
         terminal = {"completed", "awaiting_ci", "needs_human", "failed"}
+
         last_status = "running"
         retries_left = 2
         for poll in range(1, MAX_POLLS + 1):

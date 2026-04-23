@@ -1,11 +1,13 @@
-"""Prompts used by the QA Engineer agent.
+"""Message templates for the QA Engineer agent.
 
-The system prompt is only used when tests fail and the agent needs the LLM to
-analyse the failure output. When tests pass, no LLM call is made.
+System prompts are loaded from the database via PromptAssembler.
+Only message templates with format placeholders live here.
+The one-shot SYSTEM_PROMPT is kept for the failure analysis path.
 """
 
 from __future__ import annotations
 
+# Kept for the _analyse_failure fallback path
 SYSTEM_PROMPT = """\
 You are the QA Engineer agent on Clyde, an AI development team that ships code
 across multiple git repositories.
@@ -23,6 +25,22 @@ Operating rules:
   No prose outside the JSON. No markdown fences.
 """
 
+
+TOOL_LOOP_INITIAL_MESSAGE = """\
+Task: {description}
+
+Changed files: {changed_files}
+
+Repository: {repo_name} (path: {repo_path})
+
+Find and read the test files to understand the test structure before
+we run the test suite.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Original prompts
+# ---------------------------------------------------------------------------
 
 FAILURE_ANALYSIS_TEMPLATE = """\
 The following test run failed for repository "{repo_name}".
