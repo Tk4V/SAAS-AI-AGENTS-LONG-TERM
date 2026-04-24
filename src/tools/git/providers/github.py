@@ -293,6 +293,38 @@ class GitHubProvider(GitProvider):
             page += 1
         return repos
 
+    async def list_branches(
+        self,
+        *,
+        coordinates: RepoCoordinates,
+        token: str,
+    ) -> list[str]:
+        """Fetch all branch names for a repository via the GitHub API."""
+        branches: list[str] = []
+        page = 1
+        per_page = 100
+        while True:
+            url = (
+                f"{self._settings.github_api_base}/repos/{coordinates.full_name}"
+                f"/branches?per_page={per_page}&page={page}"
+            )
+            response = await self._retry.run(
+                self._http.get, url, headers=self._auth_headers(token)
+            )
+            if response.status_code >= 400:
+                raise ExternalServiceError(
+                    f"Failed to fetch branches for {coordinates.full_name}.",
+                    details={"status": response.status_code},
+                )
+            batch = response.json()
+            if not batch:
+                break
+            branches.extend(b["name"] for b in batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+        return branches
+
     async def revoke_token(self, *, token: str) -> None:
         """Delete the token via GitHub's OAuth Apps endpoint.
 

@@ -89,6 +89,16 @@ class ProjectRead(ProjectBase):
         )
 
 
+class RepoBranches(BaseModel):
+    repo_id: UUID
+    url: str
+    branches: list[str]
+
+
+class ProjectBranchesResponse(BaseModel):
+    repos: list[RepoBranches]
+
+
 class ProjectListItem(ProjectBase):
     """Compact view used in list endpoints; omits nested repos for speed."""
 
