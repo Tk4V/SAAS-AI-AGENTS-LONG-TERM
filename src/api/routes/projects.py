@@ -7,15 +7,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
-from src.api.deps import CurrentUserDep, ProjectServiceDep
+from src.api.deps import CurrentUserDep, GitFactoryDep, OAuthServiceDep, ProjectServiceDep
 from src.api.schemas.common_schemas import Page, PaginationParams
 from src.api.schemas.project_schemas import (
+    ProjectBranchesResponse,
     ProjectCreate,
     ProjectListItem,
     ProjectRead,
     ProjectRepoCreate,
     ProjectRepoRead,
     ProjectUpdate,
+    RepoBranches,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -82,6 +84,29 @@ async def delete_project(
     service: ProjectServiceDep,
 ) -> None:
     await service.delete(user_id=user.id, project_id=project_id)
+
+
+@router.get("/{project_id}/branches", response_model=ProjectBranchesResponse)
+async def list_branches(
+    project_id: UUID,
+    user: CurrentUserDep,
+    service: ProjectServiceDep,
+    oauth: OAuthServiceDep,
+    git: GitFactoryDep,
+) -> ProjectBranchesResponse:
+    """Return all branches for every repo attached to the project."""
+    project = await service.get(user_id=user.id, project_id=project_id)
+    token = await oauth.get_token(
+        user_id=user.id,
+        provider=project.repos[0].provider,
+    )
+    result: list[RepoBranches] = []
+    for repo in project.repos:
+        provider = git.for_url(repo.url)
+        coordinates = provider.parse_repo_url(repo.url)
+        branches = await provider.list_branches(coordinates=coordinates, token=token)
+        result.append(RepoBranches(repo_id=repo.id, url=repo.url, branches=branches))
+    return ProjectBranchesResponse(repos=result)
 
 
 @router.post(

@@ -118,5 +118,14 @@ class GitProvider(ABC):
         """Download the CI logs for a workflow run as a single text blob."""
 
     @abstractmethod
+    async def list_branches(
+        self,
+        *,
+        coordinates: RepoCoordinates,
+        token: str,
+    ) -> list[str]:
+        """Return the names of all branches in the repository."""
+
+    @abstractmethod
     async def revoke_token(self, *, token: str) -> None:
         """Revoke an access token at the provider, not just locally."""
