@@ -20,14 +20,14 @@ from typing import Any
 import jwt
 import structlog
 
-from src.common.crypto import TokenCipher
-from src.common.exceptions import AuthenticationError, ExternalServiceError
+from src.utils.crypto import TokenCipher
+from src.utils.exceptions import AuthenticationError, ExternalServiceError
 from src.config import Settings, get_settings
 from src.db.models.project import GitProviderKind
 from src.db.models.user_credential import UserOAuthCredential
-from src.db.queries.user_credential_queries import UserOAuthCredentialRepository
-from src.tools.git.factory import GitProviderFactory
-from src.tools.git.providers.github import GitHubProvider
+from src.db.queries.user_credential_query import UserOAuthCredentialRepository
+from src.tools.custom_tools.git.git_factory import GitProviderFactory
+from src.tools.custom_tools.git.github_provider import GitHubProvider
 
 
 class OAuthStateSigner:
@@ -197,8 +197,22 @@ class OAuthService:
             f"{self._settings.api_prefix}/auth/oauth/{provider.value}/callback"
         )
 
+    def build_callback_redirect_url(
+        self, *, provider: GitProviderKind, success: bool, error_code: str | None = None
+    ) -> str:
+        """Build the URL to redirect the browser to after OAuth callback."""
+        base = self._settings.frontend_redirect_url.rstrip("?&")
+        separator = "&" if "?" in base else "?"
+        if success:
+            return f"{base}{separator}integration={provider.value}&status=ok"
+        return (
+            f"{base}{separator}integration={provider.value}"
+            f"&status=error&code={error_code or 'unknown'}"
+        )
+
     @staticmethod
     def _scopes_for(provider: GitProviderKind) -> str:
+        """Return the OAuth scopes to request for the given provider."""
         if provider is GitProviderKind.GITHUB:
             return GitHubProvider.DEFAULT_SCOPES
         return ""

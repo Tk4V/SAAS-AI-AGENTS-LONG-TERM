@@ -1,3 +1,3 @@
-from src.agents.base import BaseAgent
+from src.agents.base_agent import BaseAgent
 
 __all__ = ["BaseAgent"]

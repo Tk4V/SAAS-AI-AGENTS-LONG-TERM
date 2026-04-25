@@ -1,0 +1,198 @@
+"""Publisher agent — commits changes, pushes branches, creates PRs.
+
+Takes the diffs from the Developer agent and publishes them to GitHub.
+Uses Haiku for PR content generation (cheap and fast).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, ClassVar
+
+from anthropic import AsyncAnthropic
+
+from src.agents.base_agent import BaseAgent
+from src.agents.prompts.dev_team.publisher_prompts import (
+    PR_CONTENT_TEMPLATE,
+    SYSTEM_PROMPT,
+)
+from src.utils.exceptions import PipelineError
+from src.config import get_settings
+from src.db.models.project import GitProviderKind
+from src.tools import toolbox
+from src.tools.custom_tools.git.git_factory import GitProviderFactory
+
+
+class PublisherAgent(BaseAgent):
+    """Commits local changes, pushes feature branches, and opens pull requests.
+
+    For each repository that contains diffs the agent configures git identity,
+    creates (or checks out) a feature branch, pushes it, and then opens a PR
+    via the configured git provider.
+    """
+
+    name: ClassVar[str] = "publisher"
+    role: ClassVar[str] = "Publisher"
+
+    def __init__(
+        self,
+        *,
+        git_factory: GitProviderFactory | None = None,
+    ) -> None:
+        super().__init__()
+        self._git_factory = git_factory or toolbox.git
+
+    async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Publish diffs as PRs and return the resulting PR URLs."""
+        repos = state.get("repos") or []
+        diffs = state.get("diffs") or {}
+        description = state.get("description") or ""
+        plan = state.get("plan") or {}
+        user_id = state.get("user_id")
+        task_id = state.get("task_id") or "unknown"
+
+        if not user_id:
+            raise PipelineError("Publisher invoked without a user_id.")
+        if not diffs:
+            self.logger.warning("publisher.no_diffs")
+            return {"pr_urls": {}, "events": []}
+
+        token = await self.resolve_github_token(user_id=user_id)
+        provider = self._git_factory.for_kind(GitProviderKind.GITHUB)
+
+        repo_map = {r.get("name", ""): r for r in repos}
+        pr_urls: dict[str, str] = {}
+
+        for repo_name, changes in diffs.items():
+            repo_meta = repo_map.get(repo_name)
+            if not repo_meta:
+                continue
+
+            local_path = Path(repo_meta.get("local_path", ""))
+            url = repo_meta.get("url", "")
+            default_branch = repo_meta.get("default_branch", "main")
+            if not local_path.is_dir():
+                continue
+
+            coordinates = provider.parse_repo_url(url)
+            branch_name = f"clyde/{task_id[:8]}/{repo_name}"
+
+            await self._git_prepare(repo_path=local_path, branch=branch_name)
+            await provider.push_branch(
+                repo_path=local_path, branch=branch_name, token=token
+            )
+
+            pr_content = await self._generate_pr_content(
+                description=description,
+                repo_name=repo_name,
+                changes=changes,
+                plan_summary=plan.get("summary", ""),
+            )
+
+            existing = await provider.find_open_pr(
+                coordinates=coordinates, token=token, head=branch_name
+            )
+            if existing:
+                pr_urls[coordinates.full_name] = existing.url
+            else:
+                pr_info = await provider.create_pull_request(
+                    coordinates=coordinates,
+                    token=token,
+                    title=pr_content.get("title", f"clyde: {description[:50]}"),
+                    body=pr_content.get("body", "Automated PR by Clyde."),
+                    head=branch_name,
+                    base=default_branch,
+                )
+                pr_urls[coordinates.full_name] = pr_info.url
+                self.logger.info("publisher.pr_created", pr=pr_info.url)
+
+        event = {
+            "name": "publisher.completed",
+            "agent": self.name,
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "payload": {"pr_count": len(pr_urls)},
+        }
+
+        return {"pr_urls": pr_urls, "events": [event]}
+
+    @staticmethod
+    async def _git_prepare(*, repo_path: Path, branch: str) -> None:
+        """Stage, commit, and prepare a feature branch in the local repo.
+
+        Configures the git user, creates or switches to the target branch,
+        stages all changes, and commits. Commit failures are tolerated
+        because there may be nothing new to commit.
+        """
+
+        async def _run_git_command(
+            command: list[str], allow_fail: bool = False
+        ) -> int:
+            """Execute a single git subprocess and return the exit code."""
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(repo_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            _, stderr_bytes = await process.communicate()
+            if process.returncode != 0 and not allow_fail:
+                raise PipelineError(
+                    f"Git failed: {' '.join(command)}",
+                    details={
+                        "stderr": stderr_bytes.decode(errors="replace")[:500]
+                    },
+                )
+            return process.returncode
+
+        await _run_git_command(["git", "config", "user.name", "Clyde AI"])
+        await _run_git_command(["git", "config", "user.email", "clyde@noreply.clyde.dev"])
+        return_code = await _run_git_command(
+            ["git", "checkout", "-b", branch], allow_fail=True
+        )
+        if return_code != 0:
+            await _run_git_command(["git", "checkout", branch])
+        await _run_git_command(["git", "add", "-A"])
+        await _run_git_command(
+            ["git", "commit", "-m", f"clyde: automated changes on {branch}"],
+            allow_fail=True,
+        )
+
+    async def _generate_pr_content(
+        self,
+        *,
+        description: str,
+        repo_name: str,
+        changes: list[dict[str, Any]],
+        plan_summary: str,
+    ) -> dict[str, Any]:
+        """Ask the LLM to produce a PR title and markdown body from the change set."""
+        changes_summary = "\n".join(
+            f"- {change.get('action', 'modify')}: {change.get('path', '?')}"
+            for change in changes
+        )
+        prompt = PR_CONTENT_TEMPLATE.format(
+            description=description,
+            repo_name=repo_name,
+            changes_summary=changes_summary,
+            plan_summary=plan_summary,
+        )
+
+        settings = get_settings()
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
+        response = await client.messages.create(
+            model=settings.anthropic_model_haiku,
+            max_tokens=2048,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text
+
+        from src.utils.json_parser import LLMJsonParser
+
+        try:
+            return LLMJsonParser.parse(text, agent="Publisher")
+        except Exception:
+            return {"title": f"clyde: {description[:60]}", "body": text}

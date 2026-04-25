@@ -1,19 +1,17 @@
-"""Tests for the EventBroadcaster in-memory pub/sub.
-
-Validates subscribe/publish flow, multiple subscribers, sentinel delivery
-on close_task, and cleanup after unsubscribe.
-"""
+"""Tests for the EventBroadcaster in-memory pub/sub."""
 
 from __future__ import annotations
 
 import asyncio
 from uuid import uuid4
 
-from src.engine.broadcaster import EventBroadcaster
+from src.utils.broadcaster import EventBroadcaster
 
 
 class TestEventBroadcaster:
-    async def test_subscribe_and_publish(self):
+    """Validate subscribe/publish flow, sentinel delivery, and cleanup."""
+
+    async def test_subscribe_and_publish(self) -> None:
         broadcaster = EventBroadcaster()
         task_id = uuid4()
 
@@ -25,7 +23,7 @@ class TestEventBroadcaster:
         assert received["name"] == "test.event"
         unsub()
 
-    async def test_multiple_subscribers(self):
+    async def test_multiple_subscribers(self) -> None:
         """All subscribers should receive the same event."""
         broadcaster = EventBroadcaster()
         task_id = uuid4()
@@ -42,7 +40,7 @@ class TestEventBroadcaster:
         unsub1()
         unsub2()
 
-    async def test_close_task_sends_sentinel(self):
+    async def test_close_task_sends_sentinel(self) -> None:
         """close_task should push None (the end-of-stream marker) to all subscribers."""
         broadcaster = EventBroadcaster()
         task_id = uuid4()
@@ -53,7 +51,7 @@ class TestEventBroadcaster:
         sentinel = queue.get_nowait()
         assert sentinel is None
 
-    async def test_unsubscribe_removes_queue(self):
+    async def test_unsubscribe_removes_queue(self) -> None:
         """After unsubscribing, publish should not put events in the removed queue."""
         broadcaster = EventBroadcaster()
         task_id = uuid4()
@@ -66,14 +64,13 @@ class TestEventBroadcaster:
 
         assert queue.empty(), "Unsubscribed queue should not receive events"
 
-    async def test_publish_to_unknown_task_is_noop(self):
+    async def test_publish_to_unknown_task_is_noop(self) -> None:
         """Publishing to a task with no subscribers should not raise."""
         broadcaster = EventBroadcaster()
         event = {"name": "orphan.event", "agent": None, "payload": {}, "occurred_at": ""}
-        # Should not raise
         await broadcaster.publish(uuid4(), event)
 
-    async def test_close_task_cleans_up_subscribers(self):
+    async def test_close_task_cleans_up_subscribers(self) -> None:
         """After close_task, the internal subscriber list should be empty."""
         broadcaster = EventBroadcaster()
         task_id = uuid4()
@@ -81,7 +78,6 @@ class TestEventBroadcaster:
         _queue, _unsub = broadcaster.subscribe(task_id)
         await broadcaster.close_task(task_id)
 
-        # Subscribing again should work fine (no leftover state)
         q2, unsub2 = broadcaster.subscribe(task_id)
         event = {"name": "new.event", "agent": None, "payload": {}, "occurred_at": ""}
         await broadcaster.publish(task_id, event)

@@ -14,7 +14,7 @@ from src.api.schemas.project_schemas import (
     ProjectUpdate,
 )
 from src.db.models.project import Project, ProjectRepo
-from src.db.queries.project_queries import ProjectRepository
+from src.db.queries.project_query import ProjectRepository
 
 
 class ProjectService:

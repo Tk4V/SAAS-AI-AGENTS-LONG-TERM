@@ -18,11 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.errors import ExceptionHandlerRegistry
 from src.api.middleware import RequestContextMiddleware
-from src.api.routes import auth, health, projects, tasks, webhooks
-from src.api.ws import task_stream
+from src.api.views import auth_view, health_view, projects_view, tasks_view, webhooks_view
+from src.api.websocket import task_stream_view
 from src.config import Settings, get_settings
 from src.db.session import db
-from src.engine import runtime as engine_runtime
 from src.tools import toolbox as tool_singleton
 
 
@@ -78,12 +77,12 @@ class Application:
 
     def _register_routers(self, app: FastAPI) -> None:
         prefix = self._settings.api_prefix
-        app.include_router(health.router, prefix=prefix)
-        app.include_router(auth.router, prefix=prefix)
-        app.include_router(projects.router, prefix=prefix)
-        app.include_router(tasks.router, prefix=prefix)
-        app.include_router(task_stream.router, prefix=prefix)
-        app.include_router(webhooks.router, prefix=prefix)
+        app.include_router(health_view.router, prefix=prefix)
+        app.include_router(auth_view.router, prefix=prefix)
+        app.include_router(projects_view.router, prefix=prefix)
+        app.include_router(tasks_view.router, prefix=prefix)
+        app.include_router(task_stream_view.router, prefix=prefix)
+        app.include_router(webhooks_view.router, prefix=prefix)
 
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:
@@ -93,11 +92,9 @@ class Application:
             env=self._settings.app_env,
             version=self._settings.app_version,
         )
-        await engine_runtime.setup()
         try:
             yield
         finally:
-            await engine_runtime.dispose()
             await tool_singleton.dispose()
             await db.dispose()
             log.info("application.stopped")

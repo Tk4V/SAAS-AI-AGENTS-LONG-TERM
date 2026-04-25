@@ -1,22 +1,14 @@
-"""Seeds test data and prints curl commands for a full end-to-end pipeline run.
+#!/usr/bin/env python3
+"""Seed test data for a full end-to-end pipeline run.
 
-Usage (from project root):
+Inserts a GitHub OAuth token, creates a project with a repo attached,
+and prints ready-to-paste curl commands.
 
-  # 1. Make sure the app is running:
-  docker compose -f docker-compose-dev.yaml up --build
-
-  # 2. In another terminal, run this script:
-  docker run --rm --network host --env-file .env clyde-ai \
+Usage:
     python scripts/e2e_setup.py \
-      --github-token ghp_YOUR_TOKEN \
-      --repo https://github.com/owner/repo \
-      --prompt "Fix the authentication bug"
-
-The script will:
-  - Generate a FERNET_KEY if not set
-  - Encrypt the GitHub PAT and insert it into user_oauth_credentials
-  - Create a project with the given repo attached
-  - Print ready-to-paste curl commands for creating a task and polling it
+        --github-token ghp_YOUR_TOKEN \
+        --repo https://github.com/owner/repo \
+        --prompt "Fix the authentication bug"
 """
 
 from __future__ import annotations
@@ -24,153 +16,217 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
 from cryptography.fernet import Fernet
-
-# Inline settings parsing so the script works without importing the full app
-# (which would trigger DB/engine construction).
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "clyde")
-DB_USER = os.getenv("DB_USER", "clyde")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "clyde")
-DB_SSL = os.getenv("DB_SSL", "disable")
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-shared-with-django")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-FERNET_KEY = os.getenv("FERNET_KEY", "")
-API_PREFIX = os.getenv("API_PREFIX", "/api/v1")
-APP_HOST = os.getenv("HOST", "0.0.0.0")
-APP_PORT = int(os.getenv("PORT", "8000"))
 
-TEST_USER_ID = 1
-BASE_URL = f"http://localhost:{APP_PORT}{API_PREFIX}"
+class E2EConfig:
+    """Reads environment variables for the E2E setup script."""
 
+    def __init__(self) -> None:
+        self.db_host = os.getenv("DB_HOST", "localhost")
+        self.db_port = int(os.getenv("DB_PORT", "5432"))
+        self.db_name = os.getenv("DB_NAME", "clyde")
+        self.db_user = os.getenv("DB_USER", "clyde")
+        self.db_password = os.getenv("DB_PASSWORD", "clyde")
+        self.db_ssl = os.getenv("DB_SSL", "disable")
+        self.jwt_secret = os.getenv("JWT_SECRET", "change-me-shared-with-django")
+        self.jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+        self.jwt_audience = os.getenv("JWT_AUDIENCE", "")
+        self.fernet_key = os.getenv("FERNET_KEY", "")
+        self.api_prefix = os.getenv("API_PREFIX", "/api/v1")
+        self.app_port = int(os.getenv("PORT", "8000"))
+        self.user_id = 1
 
-def make_jwt(user_id: int) -> str:
-    now = datetime.now(UTC)
-    payload = {
-        "user_id": user_id,
-        "username": "e2e_tester",
-        "email": "e2e@test.local",
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(days=7)).timestamp()),
-        "type": "access",
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    @property
+    def base_url(self) -> str:
+        """Build the API base URL."""
+        return f"http://localhost:{self.app_port}{self.api_prefix}"
 
 
-def encrypt_token(plaintext: str, fernet_key: str) -> str:
-    f = Fernet(fernet_key.encode())
-    return f.encrypt(plaintext.encode()).decode()
+class JWTGenerator:
+    """Generates JWT tokens compatible with Django simplejwt."""
+
+    @staticmethod
+    def create(config: E2EConfig) -> str:
+        """Create a JWT token valid for 7 days."""
+        now = datetime.now(UTC)
+        payload = {
+            "user_id": config.user_id,
+            "username": "e2e_tester",
+            "email": "e2e@test.local",
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(days=7)).timestamp()),
+            "type": "access",
+        }
+        if config.jwt_audience:
+            payload["aud"] = config.jwt_audience
+        return jwt.encode(payload, config.jwt_secret, algorithm=config.jwt_algorithm)
 
 
-async def seed_database(
-    *,
-    github_token_encrypted: str,
-    repo_url: str,
-    default_branch: str,
-) -> tuple[str, str]:
-    """Insert test data directly into the database. Returns (project_id, repo_id)."""
-    import asyncpg
+class TokenEncryptor:
+    """Encrypts tokens using Fernet symmetric encryption."""
 
-    ssl_mode = DB_SSL if DB_SSL != "disable" else None
-    conn = await asyncpg.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        ssl=ssl_mode,
-    )
+    @staticmethod
+    def encrypt(plaintext: str, fernet_key: str) -> str:
+        """Encrypt a plaintext string and return the ciphertext."""
+        fernet = Fernet(fernet_key.encode())
+        return fernet.encrypt(plaintext.encode()).decode()
 
-    try:
-        # Upsert OAuth credential for the test user.
-        cred_id = str(uuid.uuid4())
-        await conn.execute(
-            """
-            INSERT INTO user_oauth_credentials (id, user_id, provider, token_encrypted, scopes, granted_at, created_at, updated_at)
-            VALUES ($1, $2, 'github', $3, 'repo,workflow', now(), now(), now())
-            ON CONFLICT (user_id, provider)
-            DO UPDATE SET token_encrypted = $3, updated_at = now()
-            """,
-            uuid.UUID(cred_id),
-            TEST_USER_ID,
-            github_token_encrypted,
+
+class DatabaseSeeder:
+    """Seeds the database with test data for E2E runs."""
+
+    @staticmethod
+    async def seed(
+        *,
+        config: E2EConfig,
+        github_token_encrypted: str,
+        repo_url: str,
+        default_branch: str,
+    ) -> tuple[str, str]:
+        """Insert OAuth credential, project, and repo. Returns (project_id, repo_id)."""
+        import asyncpg
+
+        ssl_mode = config.db_ssl if config.db_ssl != "disable" else None
+        connection = await asyncpg.connect(
+            host=config.db_host,
+            port=config.db_port,
+            database=config.db_name,
+            user=config.db_user,
+            password=config.db_password,
+            ssl=ssl_mode,
         )
-        print(f"  GitHub token saved for user_id={TEST_USER_ID}")
 
-        # Create a project.
-        project_id = str(uuid.uuid4())
-        await conn.execute(
-            """
-            INSERT INTO projects (id, user_id, name, description, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, now(), now())
-            ON CONFLICT DO NOTHING
-            """,
-            uuid.UUID(project_id),
-            TEST_USER_ID,
-            f"e2e-test-{datetime.now(UTC).strftime('%H%M%S')}",
-            "End-to-end test project created by e2e_setup.py",
-        )
-        print(f"  Project created: {project_id}")
+        try:
+            credential_id = str(uuid.uuid4())
+            await connection.execute(
+                """
+                INSERT INTO user_oauth_credentials
+                    (id, user_id, provider, token_encrypted, scopes, granted_at, created_at, updated_at)
+                VALUES ($1, $2, 'github', $3, 'repo,workflow', now(), now(), now())
+                ON CONFLICT (user_id, provider)
+                DO UPDATE SET token_encrypted = $3, updated_at = now()
+                """,
+                uuid.UUID(credential_id),
+                config.user_id,
+                github_token_encrypted,
+            )
+            print(f"  GitHub token saved for user_id={config.user_id}")
 
-        # Attach the repo.
-        repo_name = repo_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-        repo_id = str(uuid.uuid4())
-        await conn.execute(
-            """
-            INSERT INTO project_repos (id, project_id, provider, url, default_branch, created_at, updated_at)
-            VALUES ($1, $2, 'github', $3, $4, now(), now())
-            """,
-            uuid.UUID(repo_id),
-            uuid.UUID(project_id),
-            repo_url,
-            default_branch,
-        )
-        print(f"  Repo attached: {repo_name} ({repo_url})")
+            project_id = str(uuid.uuid4())
+            project_name = f"e2e-test-{datetime.now(UTC).strftime('%H%M%S')}"
+            await connection.execute(
+                """
+                INSERT INTO projects (id, user_id, name, description, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, now(), now())
+                ON CONFLICT DO NOTHING
+                """,
+                uuid.UUID(project_id),
+                config.user_id,
+                project_name,
+                "End-to-end test project created by e2e_setup.py",
+            )
+            print(f"  Project created: {project_id}")
 
-        return project_id, repo_id
+            repo_id = str(uuid.uuid4())
+            await connection.execute(
+                """
+                INSERT INTO project_repos
+                    (id, project_id, provider, url, default_branch, created_at, updated_at)
+                VALUES ($1, $2, 'github', $3, $4, now(), now())
+                """,
+                uuid.UUID(repo_id),
+                uuid.UUID(project_id),
+                repo_url,
+                default_branch,
+            )
+            repo_name = repo_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+            print(f"  Repo attached: {repo_name} ({repo_url})")
 
-    finally:
-        await conn.close()
+            return project_id, repo_id
+
+        finally:
+            await connection.close()
+
+
+class CurlCommandPrinter:
+    """Prints ready-to-paste curl commands for testing the API."""
+
+    @staticmethod
+    def print_commands(
+        *,
+        config: E2EConfig,
+        token: str,
+        project_id: str,
+        prompt: str,
+    ) -> None:
+        """Print curl commands for creating and monitoring tasks."""
+        base = config.base_url
+
+        task_body = json.dumps({
+            "project_id": project_id,
+            "description": prompt,
+        })
+
+        print("\n# Create a task (starts the pipeline automatically):")
+        print(f'curl -s -X POST {base}/tasks \\')
+        print(f'  -H "Authorization: Bearer {token}" \\')
+        print(f'  -H "Content-Type: application/json" \\')
+        print(f"  -d '{task_body}' | python -m json.tool")
+
+        print("\n# Poll task status (replace TASK_ID_HERE):")
+        print(f'curl -s {base}/tasks/TASK_ID_HERE \\')
+        print(f'  -H "Authorization: Bearer {token}" | python -m json.tool')
+
+        print(f"\n# List all tasks for this project:")
+        print(f'curl -s "{base}/tasks?project_id={project_id}" \\')
+        print(f'  -H "Authorization: Bearer {token}" | python -m json.tool')
+
+        print(f"\n# Watch pipeline events via WebSocket:")
+        print(f"wscat -c 'ws://localhost:{config.app_port}{config.api_prefix}"
+              f"/ws/tasks/TASK_ID_HERE?token={token}'")
+
+        print(f"\n# Health check:")
+        print(f"curl -s {base}/health | python -m json.tool")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed test data for e2e pipeline run")
-    parser.add_argument("--github-token", required=True, help="GitHub Personal Access Token (ghp_...)")
-    parser.add_argument("--repo", required=True, help="GitHub repo URL (https://github.com/owner/repo)")
+    """Run the E2E setup: generate JWT, encrypt token, seed DB, print curl commands."""
+    parser = argparse.ArgumentParser(description="Seed test data for E2E pipeline run")
+    parser.add_argument("--github-token", required=True, help="GitHub PAT (ghp_...)")
+    parser.add_argument("--repo", required=True, help="GitHub repo URL")
     parser.add_argument("--branch", default="main", help="Default branch (default: main)")
-    parser.add_argument("--prompt", default="Analyze this repository and suggest improvements", help="Task description")
+    parser.add_argument("--prompt", default="Analyze this repository and suggest improvements")
     args = parser.parse_args()
 
-    # Resolve Fernet key.
-    fernet_key = FERNET_KEY
+    config = E2EConfig()
+
+    fernet_key = config.fernet_key
     if not fernet_key:
         fernet_key = Fernet.generate_key().decode()
-        print(f"\n  FERNET_KEY was not set. Generated one for this run:")
-        print(f"  {fernet_key}")
-        print(f"  Add it to your .env to reuse: FERNET_KEY={fernet_key}\n")
+        print(f"\n  FERNET_KEY not set. Generated: {fernet_key}")
+        print(f"  Add to .env: FERNET_KEY={fernet_key}\n")
 
     print("\n=== Step 1: Generating JWT ===")
-    token = make_jwt(TEST_USER_ID)
-    print(f"  JWT for user_id={TEST_USER_ID} (valid 7 days)")
+    token = JWTGenerator.create(config)
+    print(f"  JWT for user_id={config.user_id} (valid 7 days)")
 
     print("\n=== Step 2: Encrypting GitHub PAT ===")
-    encrypted = encrypt_token(args.github_token, fernet_key)
+    encrypted = TokenEncryptor.encrypt(args.github_token, fernet_key)
     print(f"  Encrypted ({len(encrypted)} chars)")
 
     print("\n=== Step 3: Seeding database ===")
-    project_id, repo_id = asyncio.run(
-        seed_database(
+    project_id, _ = asyncio.run(
+        DatabaseSeeder.seed(
+            config=config,
             github_token_encrypted=encrypted,
             repo_url=args.repo,
             default_branch=args.branch,
@@ -178,36 +234,12 @@ def main() -> None:
     )
 
     print("\n=== Step 4: Ready! ===")
-    print("\nCopy-paste these commands:\n")
-
-    task_body = json.dumps({
-        "project_id": project_id,
-        "description": args.prompt,
-    })
-
-    print("# Create a task (starts the pipeline automatically):")
-    print(f'curl -s -X POST {BASE_URL}/tasks \\')
-    print(f'  -H "Authorization: Bearer {token}" \\')
-    print(f'  -H "Content-Type: application/json" \\')
-    print(f"  -d '{task_body}' | python -m json.tool")
-
-    print()
-    print("# After you get the task ID from the response, poll its status:")
-    print(f'curl -s {BASE_URL}/tasks/TASK_ID_HERE \\')
-    print(f'  -H "Authorization: Bearer {token}" | python -m json.tool')
-
-    print()
-    print("# List all tasks:")
-    print(f'curl -s "{BASE_URL}/tasks?project_id={project_id}" \\')
-    print(f'  -H "Authorization: Bearer {token}" | python -m json.tool')
-
-    print()
-    print("# Watch pipeline events via WebSocket (wscat or websocat):")
-    print(f"wscat -c 'ws://localhost:{APP_PORT}{API_PREFIX}/ws/tasks/TASK_ID_HERE?token={token}'")
-
-    print()
-    print("# Check health:")
-    print(f"curl -s {BASE_URL}/health | python -m json.tool")
+    CurlCommandPrinter.print_commands(
+        config=config,
+        token=token,
+        project_id=project_id,
+        prompt=args.prompt,
+    )
 
 
 if __name__ == "__main__":

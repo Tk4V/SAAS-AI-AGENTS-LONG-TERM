@@ -22,7 +22,21 @@ from src.config import Settings, get_settings
 
 
 class Database:
+    """Process-wide async database gateway backed by SQLAlchemy.
+
+    Owns the ``AsyncEngine`` and an ``async_sessionmaker``, and provides
+    two ways to obtain a scoped session: ``get_session`` for FastAPI
+    dependency injection and ``session_scope`` for standalone use
+    (CLI scripts, background tasks, tests).
+    """
+
     def __init__(self, settings: Settings | None = None) -> None:
+        """Create the engine and session factory from application settings.
+
+        Args:
+            settings: Optional settings override; defaults to ``get_settings()``.
+                Useful in tests to point at an isolated database.
+        """
         self._settings = settings or get_settings()
         self._engine: AsyncEngine = create_async_engine(
             self._settings.database_url,
@@ -41,10 +55,12 @@ class Database:
 
     @property
     def engine(self) -> AsyncEngine:
+        """The underlying ``AsyncEngine`` instance."""
         return self._engine
 
     @property
     def sessionmaker(self) -> async_sessionmaker[AsyncSession]:
+        """The configured ``async_sessionmaker`` bound to the engine."""
         return self._sessionmaker
 
     async def get_session(self) -> AsyncIterator[AsyncSession]:

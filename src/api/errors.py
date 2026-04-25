@@ -16,7 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from src.common.exceptions import AppError
+from src.utils.exceptions import AppError
 
 
 class ExceptionHandlerRegistry:

@@ -18,7 +18,7 @@ from jwt import (
     InvalidTokenError,
 )
 
-from src.common.exceptions import AuthenticationError
+from src.utils.exceptions import AuthenticationError
 from src.config import Settings, get_settings
 
 

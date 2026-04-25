@@ -27,9 +27,9 @@ from src.config.constants import (
     WS_EVENT_TASK_STATUS_CHANGED,
 )
 from src.db.models.task import Task, TaskStatus
-from src.db.queries.task_queries import TaskRepository
+from src.db.queries.task_query import TaskRepository
 from src.db.session import Database, db
-from src.engine.broadcaster import broadcaster
+from src.utils.broadcaster import broadcaster
 
 
 # Branch names created by Developer agent follow this pattern:
@@ -49,6 +49,39 @@ class WebhookService:
         self._settings = settings or get_settings()
         self._database = database or db
         self._logger = structlog.get_logger("clyde.service.webhook")
+
+    async def process_github_event(
+        self,
+        *,
+        raw_body: bytes,
+        signature: str,
+        event_type: str,
+        session: AsyncSession,
+    ) -> dict[str, str]:
+        """Verify signature, parse payload, and route the event.
+
+        Returns a dict with 'status' key ('ok' or 'error').
+        Raises AuthenticationError for missing/invalid signatures.
+        """
+        from src.utils.exceptions import AuthenticationError
+
+        if not signature:
+            raise AuthenticationError("Missing X-Hub-Signature-256 header.")
+
+        if not self.verify_signature(payload=raw_body, signature=signature):
+            raise AuthenticationError("Invalid webhook signature.")
+
+        self._logger.info("webhook.received", event=event_type)
+
+        if event_type == "workflow_run":
+            payload = GitHubWorkflowRunPayload.model_validate_json(raw_body)
+            await self.handle_workflow_run(session=session, payload=payload)
+        elif event_type == "ping":
+            self._logger.info("webhook.ping")
+        else:
+            self._logger.debug("webhook.unhandled_event", event=event_type)
+
+        return {"status": "ok"}
 
     def verify_signature(self, *, payload: bytes, signature: str) -> bool:
         """HMAC-SHA256 verification against GITHUB_WEBHOOK_SECRET.
