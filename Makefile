@@ -2,11 +2,20 @@
         run lint format typecheck test test-cov migrate migrate-docker makemigration \
         downgrade reset-db pre-commit clean
 
-PYTHON ?= python3
 VENV   ?= .venv
-PIP    := $(VENV)/bin/pip
 PY     := $(VENV)/bin/python
 APP    := src.api.app:app
+
+# Use uv if available, otherwise fall back to python3 + pip
+UV     := $(shell command -v uv 2>/dev/null)
+ifdef UV
+  VENV_CREATE = uv venv $(VENV)
+  PIP_INSTALL = uv pip install
+else
+  PYTHON ?= python3
+  VENV_CREATE = $(PYTHON) -m venv $(VENV) && $(VENV)/bin/pip install --upgrade pip
+  PIP_INSTALL = $(VENV)/bin/pip install
+endif
 
 help:
 	@echo "Available targets:"
@@ -33,14 +42,13 @@ help:
 	@echo "  clean          Remove caches and build artefacts"
 
 $(VENV)/bin/activate:
-	$(PYTHON) -m venv $(VENV)
-	$(PIP) install --upgrade pip
+	$(VENV_CREATE)
 
 install: $(VENV)/bin/activate
-	$(PIP) install -r requirements/prod.txt
+	$(PIP_INSTALL) -r requirements/prod.txt
 
 install-dev: $(VENV)/bin/activate
-	$(PIP) install -r requirements/dev.txt
+	$(PIP_INSTALL) -r requirements/dev.txt
 	$(VENV)/bin/pre-commit install
 
 local:
