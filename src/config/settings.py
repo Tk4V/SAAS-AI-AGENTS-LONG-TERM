@@ -49,6 +49,17 @@ class Settings(BaseSettings):
         default="disable",
         description="Set to 'require' for RDS, 'disable' for local Docker Postgres.",
     )
+
+    # AWS Secrets Manager — when both are set the DB password is fetched from SM
+    # instead of DB_PASSWORD, enabling automatic rotation without env-file changes.
+    aws_secret_manager: str = Field(
+        default="",
+        description="Secrets Manager secret name that holds the DB password JSON.",
+    )
+    aws_region: str = Field(
+        default="",
+        description="AWS region for the Secrets Manager client (e.g. 'us-east-1').",
+    )
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_recycle_sec: int = 1800
@@ -117,6 +128,20 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Async URL used by the application engine."""
         return self._build_db_url("postgresql+asyncpg")
+
+    @property
+    def database_url_no_password(self) -> str:
+        """Async URL with an empty password — used when a Secrets Manager callable
+        supplies the credential at connect time via ``connect_args``."""
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.db_user,
+            password="",
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+            query={"ssl": self.db_ssl} if self.db_ssl and self.db_ssl != "disable" else {},
+        ).render_as_string(hide_password=False)
 
     @property
     def database_url_sync(self) -> str:
