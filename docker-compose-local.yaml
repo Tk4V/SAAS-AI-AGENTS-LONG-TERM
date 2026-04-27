@@ -1,6 +1,5 @@
-# Just Postgres with pgvector, for engineers running the app directly from the IDE.
-# The "migrate" service runs on demand via the "migrate" profile and exits after
-# applying pending Alembic migrations against the local database.
+# Full local stack: Postgres + Alembic migrations + FastAPI app with hot reload.
+# A single `docker compose up` brings everything online — no host venv required.
 name: clyde-ai-local
 
 services:
@@ -28,17 +27,65 @@ services:
       dockerfile: Dockerfile
       args:
         REQUIREMENTS: dev
+    container_name: clyde_migrate_local
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-clyde}
       DB_USER: ${POSTGRES_USER:-clyde}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-clyde}
+      DB_SSL: disable
     command: ["alembic", "upgrade", "head"]
-    profiles: ["migrate"]
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REQUIREMENTS: dev
+    container_name: clyde_app_local
+    restart: unless-stopped
+    user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-clyde}
+      DB_USER: ${POSTGRES_USER:-clyde}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-clyde}
+      DB_SSL: disable
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./alembic.ini:/app/alembic.ini
+      - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - uvicorn
+      - src.api.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/src
 
 volumes:
   clyde_pg_local:
