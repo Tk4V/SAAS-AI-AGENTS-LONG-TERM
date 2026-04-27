@@ -9,17 +9,28 @@ from __future__ import annotations
 from uuid import UUID
 
 from src.api.schemas.project_schemas import (
+    ProjectBranchesResponse,
     ProjectCreate,
     ProjectRepoCreate,
     ProjectUpdate,
+    RepoBranches,
 )
 from src.db.models.project import Project, ProjectRepo
 from src.db.queries.project_query import ProjectRepository
+from src.services.oauth_service import OAuthService
+from src.tools.custom_tools.git.git_factory import GitProviderFactory
 
 
 class ProjectService:
-    def __init__(self, repository: ProjectRepository) -> None:
+    def __init__(
+        self,
+        repository: ProjectRepository,
+        oauth: OAuthService,
+        git_factory: GitProviderFactory,
+    ) -> None:
         self._repo = repository
+        self._oauth = oauth
+        self._git = git_factory
 
     async def create(self, *, user_id: int, payload: ProjectCreate) -> Project:
         project = await self._repo.create(
@@ -41,6 +52,22 @@ class ProjectService:
 
     async def get(self, *, user_id: int, project_id: UUID) -> Project:
         return await self._repo.get(user_id=user_id, project_id=project_id)
+
+    async def list_branches(
+        self,
+        *,
+        user_id: int,
+        project_id: UUID,
+    ) -> ProjectBranchesResponse:
+        project = await self._repo.get(user_id=user_id, project_id=project_id)
+        result: list[RepoBranches] = []
+        for repo in project.repos:
+            token = await self._oauth.get_token(user_id=user_id, provider=repo.provider)
+            provider = self._git.for_url(repo.url)
+            coordinates = provider.parse_repo_url(repo.url)
+            branches = await provider.list_branches(coordinates=coordinates, token=token)
+            result.append(RepoBranches(repo_id=repo.id, url=repo.url, branches=branches))
+        return ProjectBranchesResponse(repos=result)
 
     async def list(
         self,

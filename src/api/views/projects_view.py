@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, status
 from src.api.dependencies import CurrentUserDep, ProjectServiceDep
 from src.api.schemas.common_schemas import Page, PaginationParams
 from src.api.schemas.project_schemas import (
+    ProjectBranchesResponse,
     ProjectCreate,
     ProjectListItem,
     ProjectRead,
@@ -63,6 +64,16 @@ class ProjectView:
         """Fetch a single project with its attached repositories."""
         project = await service.get(user_id=user.id, project_id=project_id)
         return ProjectRead.from_orm(project)
+
+    @staticmethod
+    @router.get("/{project_id}/branches", response_model=ProjectBranchesResponse)
+    async def list_branches(
+        project_id: UUID,
+        user: CurrentUserDep,
+        service: ProjectServiceDep,
+    ) -> ProjectBranchesResponse:
+        """Return all branches for every repo attached to the project."""
+        return await service.list_branches(user_id=user.id, project_id=project_id)
 
     @staticmethod
     @router.patch("/{project_id}", response_model=ProjectRead)
