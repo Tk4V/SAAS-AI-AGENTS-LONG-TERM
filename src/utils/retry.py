@@ -1,6 +1,6 @@
 """Reusable retry policies for outbound calls.
 
-Every external API in this project (Anthropic, GitHub, Docker, RDS) is wrapped
+Every external API in this project (Anthropic, GitHub, RDS) is wrapped
 in a `RetryPolicy`. Centralising the retry behaviour means we get consistent
 backoff, jitter, and structured logging for free.
 """
@@ -88,16 +88,6 @@ class RetryPresets:
     """
 
     @staticmethod
-    def for_llm() -> RetryPolicy:
-        """Return a retry policy tuned for Anthropic LLM calls (4 attempts, 1-20 s backoff)."""
-        return RetryPolicy(
-            max_attempts=4,
-            base_delay=1.0,
-            max_delay=20.0,
-            name="llm",
-        )
-
-    @staticmethod
     def for_github() -> RetryPolicy:
         """Return a retry policy tuned for GitHub API calls (3 attempts, 1-10 s backoff)."""
         return RetryPolicy(
@@ -107,16 +97,3 @@ class RetryPresets:
             name="github",
         )
 
-    @staticmethod
-    def for_sandbox() -> RetryPolicy:
-        """Return a retry policy for sandbox runs (2 attempts, short backoff).
-
-        Sandbox executions are deterministic; retries only guard against
-        transient Docker errors, so the budget is intentionally small.
-        """
-        return RetryPolicy(
-            max_attempts=2,
-            base_delay=0.5,
-            max_delay=2.0,
-            name="sandbox",
-        )

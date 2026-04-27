@@ -12,18 +12,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from anthropic import AsyncAnthropic
-
 from src.agents.base_agent import BaseAgent
 from src.agents.prompts.dev_team.publisher_prompts import (
     PR_CONTENT_TEMPLATE,
     SYSTEM_PROMPT,
 )
 from src.utils.exceptions import PipelineError
-from src.config import get_settings
 from src.db.models.project import GitProviderKind
-from src.tools import toolbox
-from src.tools.custom_tools.git.git_factory import GitProviderFactory
 
 
 class PublisherAgent(BaseAgent):
@@ -36,14 +31,6 @@ class PublisherAgent(BaseAgent):
 
     name: ClassVar[str] = "publisher"
     role: ClassVar[str] = "Publisher"
-
-    def __init__(
-        self,
-        *,
-        git_factory: GitProviderFactory | None = None,
-    ) -> None:
-        super().__init__()
-        self._git_factory = git_factory or toolbox.git
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
         """Publish diffs as PRs and return the resulting PR URLs."""
@@ -61,7 +48,7 @@ class PublisherAgent(BaseAgent):
             return {"pr_urls": {}, "events": []}
 
         token = await self.resolve_github_token(user_id=user_id)
-        provider = self._git_factory.for_kind(GitProviderKind.GITHUB)
+        provider = self.toolbox.git.for_kind(GitProviderKind.GITHUB)
 
         repo_map = {r.get("name", ""): r for r in repos}
         pr_urls: dict[str, str] = {}
@@ -180,10 +167,8 @@ class PublisherAgent(BaseAgent):
             plan_summary=plan_summary,
         )
 
-        settings = get_settings()
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
-        response = await client.messages.create(
-            model=settings.anthropic_model_haiku,
+        response = await self.toolbox.anthropic.messages.create(
+            model=self.toolbox.settings.anthropic_model_haiku,
             max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],

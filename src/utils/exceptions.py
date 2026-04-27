@@ -57,25 +57,11 @@ class AlreadyExistsError(AppError):
     http_status = 409
 
 
-class ValidationError(AppError):
-    """The request payload failed validation rules."""
-
-    code = "validation_error"
-    http_status = 422
-
-
 class AuthenticationError(AppError):
     """The caller did not provide valid credentials."""
 
     code = "authentication_error"
     http_status = 401
-
-
-class AuthorizationError(AppError):
-    """The caller is authenticated but not allowed to perform this action."""
-
-    code = "authorization_error"
-    http_status = 403
 
 
 class ConflictError(AppError):
@@ -86,7 +72,7 @@ class ConflictError(AppError):
 
 
 class ExternalServiceError(AppError):
-    """An upstream dependency (LLM, GitHub, Docker, RDS) failed."""
+    """An upstream dependency (LLM, GitHub, RDS) failed."""
 
     code = "external_service_error"
     http_status = 502
@@ -96,11 +82,4 @@ class PipelineError(AppError):
     """An error happened during pipeline execution and was not recoverable."""
 
     code = "pipeline_error"
-    http_status = 500
-
-
-class SandboxError(AppError):
-    """The sandbox runner failed to start, timed out, or exceeded resource limits."""
-
-    code = "sandbox_error"
     http_status = 500

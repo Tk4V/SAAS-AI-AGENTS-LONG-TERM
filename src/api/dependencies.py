@@ -24,8 +24,8 @@ from src.services.auth_service import AuthService, CurrentUser
 from src.services.oauth_service import OAuthService, OAuthStateSigner
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
-from src.tools import toolbox as tool_singleton
-from src.tools.custom_tools.git.git_factory import GitProviderFactory
+from src.integrations import toolbox as tool_singleton
+from src.integrations.git.factory import GitProviderFactory
 
 bearer_scheme = HTTPBearer(
     bearerFormat="JWT",

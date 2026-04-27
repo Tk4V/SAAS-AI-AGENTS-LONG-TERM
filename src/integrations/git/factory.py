@@ -10,8 +10,8 @@ from __future__ import annotations
 from src.utils.exceptions import ExternalServiceError
 from src.config import Settings, get_settings
 from src.db.models.project import GitProviderKind
-from src.tools.custom_tools.git.git_provider import GitProvider
-from src.tools.custom_tools.git.github_provider import GitHubProvider
+from src.integrations.git.provider import GitProvider
+from src.integrations.git.github import GitHubProvider
 
 
 class GitProviderFactory:

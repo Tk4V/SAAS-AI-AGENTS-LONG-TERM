@@ -26,8 +26,8 @@ from src.config import Settings, get_settings
 from src.db.models.project import GitProviderKind
 from src.db.models.user_credential import UserOAuthCredential
 from src.db.queries.user_credential_query import UserOAuthCredentialRepository
-from src.tools.custom_tools.git.git_factory import GitProviderFactory
-from src.tools.custom_tools.git.github_provider import GitHubProvider
+from src.integrations.git.factory import GitProviderFactory
+from src.integrations.git.github import GitHubProvider
 
 
 class OAuthStateSigner:

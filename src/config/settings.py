@@ -69,14 +69,7 @@ class Settings(BaseSettings):
     jwt_audience: str = "clyde-ai"
 
     anthropic_api_key: SecretStr = SecretStr("")
-    anthropic_model_opus: str = "claude-opus-4-6"
-    anthropic_model_sonnet: str = "claude-sonnet-4-6"
     anthropic_model_haiku: str = "claude-haiku-4-5"
-    anthropic_max_tokens: int = 16384
-
-    voyage_api_key: SecretStr = SecretStr("")
-    voyage_model: str = "voyage-3-large"
-    voyage_dimensions: int = 1024
 
     github_oauth_client_id: SecretStr = SecretStr("")
     github_oauth_client_secret: SecretStr = SecretStr("")
@@ -86,11 +79,6 @@ class Settings(BaseSettings):
     oauth_state_ttl_sec: int = 600
     oauth_callback_base_url: str = "http://localhost:8000"
     frontend_redirect_url: str = "http://localhost:3000/integrations"
-
-    sandbox_timeout_sec: int = 300
-    sandbox_memory_limit: str = "2g"
-    sandbox_cpu_limit: float = 1.0
-    sandbox_network: str = "none"
 
     max_fix_attempts: int = 3
 
@@ -141,21 +129,6 @@ class Settings(BaseSettings):
             database=self.db_name,
             query={"ssl": self.db_ssl} if self.db_ssl and self.db_ssl != "disable" else {},
         ).render_as_string(hide_password=False)
-
-    @property
-    def database_url_sync(self) -> str:
-        """Synchronous URL for tools that do not speak asyncpg."""
-        return self._build_db_url("postgresql+psycopg")
-
-    @property
-    def database_url_libpq(self) -> str:
-        """Plain libpq URL used by psycopg-based libraries (LangGraph checkpointer)."""
-        return self._build_db_url("postgresql")
-
-    @property
-    def is_production(self) -> bool:
-        return self.app_env == "prod"
-
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

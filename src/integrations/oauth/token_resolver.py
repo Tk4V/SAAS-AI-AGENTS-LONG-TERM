@@ -31,7 +31,7 @@ class TokenResolver:
 
         Args:
             database: Database instance for session creation. Defaults to global singleton.
-            cipher: Cipher for decrypting stored tokens. Defaults to toolbox.cipher.
+            cipher: Cipher for decrypting stored tokens. Defaults to integrations.registry.toolbox.cipher.
         """
         self._database = database or db
         self._cipher = cipher
@@ -39,7 +39,7 @@ class TokenResolver:
     def _get_cipher(self) -> TokenCipher:
         """Lazily resolve the cipher to avoid circular imports at init time."""
         if self._cipher is None:
-            from src.tools.tools_registry import toolbox
+            from src.integrations.registry import toolbox
             self._cipher = toolbox.cipher
         return self._cipher
 
