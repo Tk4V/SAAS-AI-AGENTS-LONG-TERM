@@ -1,125 +1,106 @@
-.PHONY: help install install-dev local up down dev prod logs ps shell \
-        run lint format typecheck test test-cov migrate migrate-docker makemigration \
-        downgrade reset-db pre-commit clean
+.PHONY: help up down restart rebuild logs ps shell psql \
+        migrate makemigration downgrade reset-db \
+        lint format typecheck test test-cov pre-commit \
+        dev prod clean
 
-VENV   ?= .venv
-PY     := $(VENV)/bin/python
-APP    := src.api.app:app
-
-# Use uv if available, otherwise fall back to python3 + pip
-UV     := $(shell command -v uv 2>/dev/null)
-ifdef UV
-  VENV_CREATE = uv venv $(VENV)
-  PIP_INSTALL = uv pip install
-else
-  PYTHON ?= python3
-  VENV_CREATE = $(PYTHON) -m venv $(VENV) && $(VENV)/bin/pip install --upgrade pip
-  PIP_INSTALL = $(VENV)/bin/pip install
-endif
+COMPOSE_LOCAL := docker compose -f docker-compose-local.yaml
+COMPOSE_DEV   := docker compose -f docker-compose-dev.yaml
+COMPOSE_PROD  := docker compose -f docker-compose-prod.yaml
+APP_SVC       := app
 
 help:
-	@echo "Available targets:"
-	@echo "  install        Install production requirements into the local virtualenv"
-	@echo "  install-dev    Install dev requirements and pre-commit hooks"
-	@echo "  local          Start a local Postgres container for IDE-driven development"
-	@echo "  up / dev       Run the staging-like stack (image only, points at dev RDS via .env)"
-	@echo "  down           Stop and remove dev containers"
-	@echo "  prod           Build and run the prod-style stack locally (points at prod RDS via .env)"
-	@echo "  logs / ps      Tail or list dev containers"
-	@echo "  shell          Open a shell inside the running app container"
-	@echo "  run            Run the app locally with uvicorn (no Docker)"
+	@echo "Local development (everything runs in Docker — no host venv needed):"
+	@echo "  up             Build and start the full local stack (postgres + migrations + app with hot reload)"
+	@echo "  down           Stop and remove local containers"
+	@echo "  restart        Restart the app container"
+	@echo "  rebuild        Rebuild images and restart"
+	@echo "  logs           Tail logs from all local services"
+	@echo "  ps             List local containers"
+	@echo "  shell          Open a bash shell inside the running app container"
+	@echo "  psql           Open a psql prompt inside the postgres container"
+	@echo ""
+	@echo "Database:"
+	@echo "  migrate        Apply latest Alembic migrations"
+	@echo "  makemigration  Generate a new Alembic revision (use MSG=...)"
+	@echo "  downgrade      Roll back one Alembic revision"
+	@echo "  reset-db       Drop volumes and re-run migrations from scratch"
+	@echo ""
+	@echo "Quality (runs inside the app container):"
 	@echo "  lint           Run ruff linter"
-	@echo "  format         Apply ruff formatter"
+	@echo "  format         Apply ruff formatter and fix lint issues"
 	@echo "  typecheck      Run mypy"
 	@echo "  test           Run pytest"
 	@echo "  test-cov       Run pytest with coverage report"
-	@echo "  migrate        Apply latest Alembic migrations (via local venv)"
-	@echo "  migrate-docker Apply migrations via Docker (builds image, runs against local Postgres)"
-	@echo "  makemigration  Generate a new Alembic revision (use MSG=...)"
-	@echo "  downgrade      Roll back one Alembic revision"
-	@echo "  reset-db       Drop volumes and re-run migrations"
 	@echo "  pre-commit     Run all pre-commit hooks against the repo"
+	@echo ""
+	@echo "Other environments:"
+	@echo "  dev            Run the staging-like stack (points at dev RDS via .env)"
+	@echo "  prod           Run the prod-style stack locally (points at prod RDS via .env)"
 	@echo "  clean          Remove caches and build artefacts"
 
-$(VENV)/bin/activate:
-	$(VENV_CREATE)
-
-install: $(VENV)/bin/activate
-	$(PIP_INSTALL) -r requirements/prod.txt
-
-install-dev: $(VENV)/bin/activate
-	$(PIP_INSTALL) -r requirements/dev.txt
-	$(VENV)/bin/pre-commit install
-
-local:
-	docker compose -f docker-compose-local.yaml up -d
-
-up dev:
-	docker compose -f docker-compose-dev.yaml up --build
+up:
+	$(COMPOSE_LOCAL) up --build -d
+	$(COMPOSE_LOCAL) logs -f $(APP_SVC)
 
 down:
-	docker compose -f docker-compose-dev.yaml down
+	$(COMPOSE_LOCAL) down
 
-prod:
-	docker compose -f docker-compose-prod.yaml up --build
+restart:
+	$(COMPOSE_LOCAL) restart $(APP_SVC)
+
+rebuild:
+	$(COMPOSE_LOCAL) up --build -d --force-recreate
 
 logs:
-	docker compose -f docker-compose-dev.yaml logs -f
+	$(COMPOSE_LOCAL) logs -f
 
 ps:
-	docker compose -f docker-compose-dev.yaml ps
+	$(COMPOSE_LOCAL) ps
 
 shell:
-	docker compose -f docker-compose-dev.yaml exec app bash
+	$(COMPOSE_LOCAL) exec $(APP_SVC) bash
 
-run:
-	$(VENV)/bin/uvicorn $(APP) --host 0.0.0.0 --port 8000 --reload
-
-lint:
-	$(VENV)/bin/ruff check src tests
-
-format:
-	$(VENV)/bin/ruff format src tests
-	$(VENV)/bin/ruff check src tests --fix
-
-typecheck:
-	$(VENV)/bin/mypy src
-
-test:
-	$(VENV)/bin/pytest
-
-test-cov:
-	$(VENV)/bin/pytest --cov=src --cov-report=term-missing --cov-report=html
+psql:
+	$(COMPOSE_LOCAL) exec postgres psql -U $${POSTGRES_USER:-clyde} -d $${POSTGRES_DB:-clyde}
 
 migrate:
-	$(VENV)/bin/alembic upgrade head
-
-migrate-docker:
-	docker compose -f docker-compose-local.yaml up -d postgres
-	docker compose -f docker-compose-local.yaml --profile migrate run --rm --build migrate
+	$(COMPOSE_LOCAL) run --rm migrate
 
 makemigration:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make makemigration MSG='your message'"; exit 1; fi
-	$(VENV)/bin/alembic revision --autogenerate -m "$(MSG)"
+	$(COMPOSE_LOCAL) run --rm migrate alembic revision --autogenerate -m "$(MSG)"
 
 downgrade:
-	$(VENV)/bin/alembic downgrade -1
+	$(COMPOSE_LOCAL) run --rm migrate alembic downgrade -1
 
 reset-db:
-	docker compose -f docker-compose-local.yaml down -v
-	docker compose -f docker-compose-local.yaml up -d
-	sleep 3
-	$(MAKE) migrate
+	$(COMPOSE_LOCAL) down -v
+	$(COMPOSE_LOCAL) up --build -d
+
+lint:
+	$(COMPOSE_LOCAL) exec $(APP_SVC) ruff check src tests
+
+format:
+	$(COMPOSE_LOCAL) exec $(APP_SVC) ruff format src tests
+	$(COMPOSE_LOCAL) exec $(APP_SVC) ruff check src tests --fix
+
+typecheck:
+	$(COMPOSE_LOCAL) exec $(APP_SVC) mypy src
+
+test:
+	$(COMPOSE_LOCAL) exec $(APP_SVC) pytest
+
+test-cov:
+	$(COMPOSE_LOCAL) exec $(APP_SVC) pytest --cov=src --cov-report=term-missing --cov-report=html
 
 pre-commit:
-	$(VENV)/bin/pre-commit run --all-files
+	$(COMPOSE_LOCAL) exec $(APP_SVC) pre-commit run --all-files
 
-e2e:
-	@if [ -z "$(REPO)" ] || [ -z "$(PROMPT)" ]; then \
-		echo "Usage: make e2e REPO=https://github.com/owner/repo PROMPT='Fix the bug'"; \
-		exit 1; \
-	fi
-	$(PY) scripts/e2e_test.py --repo "$(REPO)" --prompt "$(PROMPT)"
+dev:
+	$(COMPOSE_DEV) up --build
+
+prod:
+	$(COMPOSE_PROD) up --build
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov dist build
