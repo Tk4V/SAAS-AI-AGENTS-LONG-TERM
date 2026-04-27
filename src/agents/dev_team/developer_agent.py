@@ -28,6 +28,7 @@ from src.utils.exceptions import PipelineError
 from src.db.models.project import GitProviderKind
 from src.tools import toolbox
 from src.tools.custom_tools.git.git_factory import GitProviderFactory
+from src.tools.mcp_servers import github_mcp_server
 
 
 class DeveloperAgent(BaseAgent):
@@ -133,14 +134,7 @@ class DeveloperAgent(BaseAgent):
         result_text = ""
         turn_count = 0
 
-        mcp_servers = {
-            "github": {
-                "type": "stdio",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-github"],
-                "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": github_token},
-            }
-        }
+        mcp_servers = {"github": github_mcp_server(github_token)}
 
         async for message in query(
             prompt=task_description,
