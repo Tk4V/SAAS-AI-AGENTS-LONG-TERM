@@ -27,7 +27,7 @@ from src.utils.exceptions import ExternalServiceError
 from src.utils.retry import RetryPolicy, RetryPresets
 from src.config import Settings, get_settings
 from src.db.models.project import GitProviderKind
-from src.tools.custom_tools.git.git_provider import (
+from src.integrations.git.provider import (
     ClonedRepo,
     GitProvider,
     PullRequestInfo,

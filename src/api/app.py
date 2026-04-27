@@ -22,7 +22,7 @@ from src.api.views import auth_view, health_view, projects_view, tasks_view, web
 from src.api.websocket import task_stream_view
 from src.config import Settings, get_settings
 from src.db.session import db
-from src.tools import toolbox as tool_singleton
+from src.integrations import toolbox as tool_singleton
 
 
 class Application:

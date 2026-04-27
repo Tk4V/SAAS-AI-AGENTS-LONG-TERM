@@ -17,21 +17,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from src.agents.base_agent import BaseAgent
-from src.agents.prompts.dev_team.developer_prompts import (
-    SDK_ALLOWED_TOOLS,
-    SDK_MAX_TURNS,
-    SDK_MODEL,
-    SDK_PERMISSION_MODE,
-)
+from src.agents.sdk_agent import SDKAgent
 from src.utils.exceptions import PipelineError
 from src.db.models.project import GitProviderKind
-from src.tools import toolbox
-from src.tools.custom_tools.git.git_factory import GitProviderFactory
-from src.tools.mcp_servers import github_mcp_server
+from src.agent_tools.mcp import github_mcp_server
 
 
-class DeveloperAgent(BaseAgent):
+class DeveloperAgent(SDKAgent):
     """Autonomous developer that explores, plans, and edits code via Claude Agent SDK.
 
     The agent handles only the first repository in the task state. Multi-repo
@@ -41,13 +33,17 @@ class DeveloperAgent(BaseAgent):
     name: ClassVar[str] = "developer"
     role: ClassVar[str] = "Developer"
 
-    def __init__(
-        self,
-        *,
-        git_factory: GitProviderFactory | None = None,
-    ) -> None:
-        super().__init__()
-        self._git_factory = git_factory or toolbox.git
+    SDK_ALLOWED_TOOLS: ClassVar[list[str]] = [
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "Bash(git diff*)",
+        "Bash(python -m py_compile*)",
+        "Agent",
+        "mcp__github__*",
+    ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
         """Clone repositories, run the SDK session, and return file changes.
@@ -83,10 +79,10 @@ class DeveloperAgent(BaseAgent):
                 task_description=description[:100],
             )
 
-            session_summary = await self._run_sdk_session(
-                task_description=description,
+            session_summary = await self.run_sdk_session(
+                prompt=description,
                 working_directory=primary_repo_path,
-                github_token=github_token,
+                mcp_context={"github_token": github_token},
             )
 
             file_changes = await self._collect_file_changes(
@@ -112,85 +108,14 @@ class DeveloperAgent(BaseAgent):
             shutil.rmtree(workspace_path, ignore_errors=True)
             raise
 
-    async def _run_sdk_session(
-        self,
-        *,
-        task_description: str,
-        working_directory: Path,
-        github_token: str,
-    ) -> str:
-        """Launch a Claude Agent SDK session and stream its output.
-
-        Returns the final result text produced by the SDK.
-        """
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ResultMessage,
-            UserMessage,
-            query,
-        )
-
-        result_text = ""
-        turn_count = 0
-
-        mcp_servers = {"github": github_mcp_server(github_token)}
-
-        async for message in query(
-            prompt=task_description,
-            options=ClaudeAgentOptions(
-                allowed_tools=SDK_ALLOWED_TOOLS,
-                cwd=str(working_directory),
-                max_turns=SDK_MAX_TURNS,
-                permission_mode=SDK_PERMISSION_MODE,
-                model=SDK_MODEL,
-                mcp_servers=mcp_servers,
-            ),
-        ):
-            if isinstance(message, AssistantMessage):
-                turn_count += 1
-                self._log_assistant_message(message, turn_count)
-
-            elif isinstance(message, UserMessage):
-                self._log_tool_results(message, turn_count)
-
-            elif isinstance(message, ResultMessage):
-                result_text = getattr(message, "result", "") or ""
-                self.logger.info(
-                    "developer.sdk_finished",
-                    total_turns=turn_count,
-                    cost_usd=getattr(message, "total_cost_usd", 0),
-                    result_length=len(result_text),
-                )
-
-        return result_text
-
-    def _log_assistant_message(self, message: Any, turn: int) -> None:
-        """Log text output and tool calls from an assistant turn."""
-        text = getattr(message, "text", "") or ""
-        if text:
-            self.logger.info("developer.assistant_text", turn=turn, text=text[:200])
-
-        for tool_call in getattr(message, "tool_calls", []) or []:
-            tool_name = getattr(tool_call, "name", "unknown")
-            tool_input = getattr(tool_call, "input", {}) or {}
-            self.logger.info(
-                "developer.tool_call",
-                turn=turn,
-                tool=tool_name,
-                detail=self._summarize_tool_call(tool_name, tool_input),
+    async def build_mcp_servers(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Inject the GitHub MCP server, authenticated with the per-task token."""
+        github_token = context.get("github_token")
+        if not github_token:
+            raise PipelineError(
+                "DeveloperAgent.build_mcp_servers requires a 'github_token' in mcp_context.",
             )
-
-    def _log_tool_results(self, message: Any, turn: int) -> None:
-        """Log tool execution results returned to the SDK."""
-        for block in getattr(message, "content", []) or []:
-            if hasattr(block, "tool_use_id"):
-                self.logger.info(
-                    "developer.tool_result",
-                    turn=turn,
-                    is_error=getattr(block, "is_error", False),
-                    result_length=len(str(getattr(block, "content", ""))),
-                )
+        return {"github": github_mcp_server(github_token)}
 
     async def _clone_all_repositories(
         self,
@@ -200,7 +125,7 @@ class DeveloperAgent(BaseAgent):
         workspace_path: Path,
     ) -> list[dict[str, Any]]:
         """Clone all task repositories concurrently into the workspace directory."""
-        git_provider = self._git_factory.for_kind(GitProviderKind.GITHUB)
+        git_provider = self.toolbox.git.for_kind(GitProviderKind.GITHUB)
 
         async def clone_one(repository: dict[str, Any]) -> dict[str, Any]:
             url = repository.get("url")
@@ -260,33 +185,6 @@ class DeveloperAgent(BaseAgent):
         return {repository_name: changes} if changes else {}
 
     @staticmethod
-    def _summarize_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:
-        """One-line human-readable summary of a tool call for structured logs."""
-        match tool_name:
-            case "Read":
-                file_path = tool_input.get("file_path", "?")
-                offset = tool_input.get("offset")
-                return f"{file_path}:{offset}" if offset else file_path
-            case "Edit":
-                file_path = tool_input.get("file_path", "?")
-                replaced_chars = len(tool_input.get("old_string", ""))
-                return f"{file_path} (replacing {replaced_chars} chars)"
-            case "Write":
-                file_path = tool_input.get("file_path", "?")
-                content_chars = len(tool_input.get("content", ""))
-                return f"{file_path} ({content_chars} chars)"
-            case "Glob":
-                return tool_input.get("pattern", "?")
-            case "Grep":
-                return f"/{tool_input.get('pattern', '?')}/"
-            case "Bash":
-                return tool_input.get("command", "?")[:80]
-            case "Agent":
-                return tool_input.get("prompt", "?")[:80]
-            case _:
-                return str(tool_input)[:80]
-
-    @staticmethod
     async def _run_git_command(*args: str, working_directory: Path) -> str:
         """Execute a git command asynchronously and return stdout."""
         process = await asyncio.create_subprocess_exec(
@@ -297,5 +195,3 @@ class DeveloperAgent(BaseAgent):
         )
         stdout, _ = await process.communicate()
         return stdout.decode()
-
-

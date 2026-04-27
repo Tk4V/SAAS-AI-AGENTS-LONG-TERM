@@ -1,14 +1,12 @@
 """Schemas shared across multiple resources.
 
 Pagination uses page/page_size rather than cursor based navigation, since the
-frontend currently shows numbered page controls. The error response shape is
-declared so it appears in the generated OpenAPI spec; runtime errors are
-serialised by `src.api.errors`.
+frontend currently shows numbered page controls.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Generic, TypeVar
 
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,15 +49,3 @@ class Page(BaseModel, Generic[ItemT]):
     total: int = Field(description="Total number of items across all pages.")
     page: int
     page_size: int
-
-
-class ErrorBody(BaseModel):
-    code: str
-    message: str
-    details: Any | None = None
-
-
-class ErrorResponse(BaseModel):
-    """Schema of every non-2xx response produced by the API."""
-
-    error: ErrorBody

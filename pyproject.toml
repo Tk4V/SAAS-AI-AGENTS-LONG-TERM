@@ -56,10 +56,8 @@ exclude = [
 [[tool.mypy.overrides]]
 module = [
     "voyageai.*",
-    "docker.*",
     "github.*",
     "pgvector.*",
-    "langgraph.*",
 ]
 ignore_missing_imports = true
 

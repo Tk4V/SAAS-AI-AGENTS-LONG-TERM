@@ -18,7 +18,7 @@ from src.api.schemas.project_schemas import (
 from src.db.models.project import Project, ProjectRepo
 from src.db.queries.project_query import ProjectRepository
 from src.services.oauth_service import OAuthService
-from src.tools.custom_tools.git.git_factory import GitProviderFactory
+from src.integrations.git.factory import GitProviderFactory
 
 
 class ProjectService:

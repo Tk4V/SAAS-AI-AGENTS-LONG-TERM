@@ -4,8 +4,6 @@ from src.api.schemas.auth_schemas import (
     OAuthStartResponse,
 )
 from src.api.schemas.common_schemas import (
-    ErrorBody,
-    ErrorResponse,
     Page,
     PaginationParams,
 )
@@ -25,8 +23,6 @@ from src.api.schemas.webhook_schemas import (
 )
 
 __all__ = [
-    "ErrorBody",
-    "ErrorResponse",
     "IntegrationRead",
     "IntegrationsList",
     "OAuthStartResponse",

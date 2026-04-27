@@ -16,7 +16,7 @@ from pydantic import SecretStr
 
 from src.config.settings import Settings
 from src.db.models.project import GitProviderKind
-from src.tools.custom_tools.git.git_provider import (
+from src.integrations.git.provider import (
     ClonedRepo,
     GitProvider,
     PullRequestInfo,
