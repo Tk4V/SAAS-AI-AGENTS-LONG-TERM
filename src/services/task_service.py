@@ -17,7 +17,6 @@ from src.db.session import db
 from src.utils.broadcaster import broadcaster
 from src.agents.dev_team.developer_agent import DeveloperAgent
 from src.agents.dev_team.publisher_agent import PublisherAgent
-from src.agents.dev_team.qa_agent import QAEngineerAgent
 
 
 class TaskService:
@@ -95,7 +94,7 @@ class TaskService:
 
         try:
             state = dict(initial_state)
-            for agent_class in (DeveloperAgent, PublisherAgent, QAEngineerAgent):
+            for agent_class in (DeveloperAgent, PublisherAgent):
                 agent = agent_class()
                 result = await agent(state)
                 state = {**state, **result}
