@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.config import Settings, get_settings
+from src.db.password_provider import SecretsManagerPasswordProvider
 
 
 class Database:
@@ -38,8 +39,21 @@ class Database:
                 Useful in tests to point at an isolated database.
         """
         self._settings = settings or get_settings()
+
+        connect_args: dict[str, object] = {}
+        if self._settings.aws_secret_manager and self._settings.aws_region:
+            connect_args["password"] = SecretsManagerPasswordProvider(
+                self._settings.aws_secret_manager,
+                self._settings.aws_region,
+                ttl_seconds=self._settings.db_pool_recycle_sec,
+            )
+            db_url = self._settings.database_url_no_password
+        else:
+            db_url = self._settings.database_url
+
         self._engine: AsyncEngine = create_async_engine(
-            self._settings.database_url,
+            db_url,
+            connect_args=connect_args,
             pool_size=self._settings.db_pool_size,
             max_overflow=self._settings.db_max_overflow,
             pool_recycle=self._settings.db_pool_recycle_sec,
