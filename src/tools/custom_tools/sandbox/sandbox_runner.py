@@ -1,9 +1,9 @@
 """Abstract sandbox runner.
 
-QA Engineer asks the runner to execute a command (typically `pytest`,
-`go test`, `npm test`) inside a fresh isolated environment built from a
-specific repo checkout. The runner must enforce timeout, memory and CPU
-limits and isolate the network so test code cannot reach external services.
+Executes a command (typically `pytest`, `go test`, `npm test`) inside a
+fresh isolated environment built from a specific repo checkout. The runner
+enforces timeout, memory and CPU limits and isolates the network so test
+code cannot reach external services.
 """
 
 from __future__ import annotations

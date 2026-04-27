@@ -93,7 +93,6 @@ class Settings(BaseSettings):
     sandbox_network: str = "none"
 
     max_fix_attempts: int = 3
-    max_qa_iterations: int = 3
 
     fernet_key: SecretStr = SecretStr("")
 

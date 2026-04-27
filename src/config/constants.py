@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from typing import Final
 
-QA_RESULT_PASS: Final = "pass"
-QA_RESULT_FAIL: Final = "fail"
-
 CODE_CHUNK_TOKEN_TARGET: Final = 800
 CODE_CHUNK_TOKEN_OVERLAP: Final = 100
 
