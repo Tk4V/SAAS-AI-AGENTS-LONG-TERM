@@ -89,11 +89,11 @@ def get_project_repository(session: SessionDep) -> ProjectRepository:
 ProjectRepositoryDep = Annotated[ProjectRepository, Depends(get_project_repository)]
 
 
-def get_project_service(repo: ProjectRepositoryDep) -> ProjectService:
-    return ProjectService(repo)
+def get_git_factory() -> GitProviderFactory:
+    return tool_singleton.git
 
 
-ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
+GitFactoryDep = Annotated[GitProviderFactory, Depends(get_git_factory)]
 
 
 def get_task_repository(session: SessionDep) -> TaskRepository:
@@ -111,13 +111,6 @@ def get_task_service(
 
 
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
-
-
-def get_git_factory() -> GitProviderFactory:
-    return tool_singleton.git
-
-
-GitFactoryDep = Annotated[GitProviderFactory, Depends(get_git_factory)]
 
 
 def get_token_cipher() -> TokenCipher:
@@ -159,3 +152,14 @@ def get_oauth_service(
 
 
 OAuthServiceDep = Annotated[OAuthService, Depends(get_oauth_service)]
+
+
+def get_project_service(
+    repo: ProjectRepositoryDep,
+    oauth: OAuthServiceDep,
+    git_factory: GitFactoryDep,
+) -> ProjectService:
+    return ProjectService(repository=repo, oauth=oauth, git_factory=git_factory)
+
+
+ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
