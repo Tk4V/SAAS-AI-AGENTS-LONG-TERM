@@ -85,6 +85,7 @@ class DeveloperAgent(BaseAgent):
             session_summary = await self._run_sdk_session(
                 task_description=description,
                 working_directory=primary_repo_path,
+                github_token=github_token,
             )
 
             file_changes = await self._collect_file_changes(
@@ -115,6 +116,7 @@ class DeveloperAgent(BaseAgent):
         *,
         task_description: str,
         working_directory: Path,
+        github_token: str,
     ) -> str:
         """Launch a Claude Agent SDK session and stream its output.
 
@@ -131,6 +133,15 @@ class DeveloperAgent(BaseAgent):
         result_text = ""
         turn_count = 0
 
+        mcp_servers = {
+            "github": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
+                "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": github_token},
+            }
+        }
+
         async for message in query(
             prompt=task_description,
             options=ClaudeAgentOptions(
@@ -139,6 +150,7 @@ class DeveloperAgent(BaseAgent):
                 max_turns=SDK_MAX_TURNS,
                 permission_mode=SDK_PERMISSION_MODE,
                 model=SDK_MODEL,
+                mcp_servers=mcp_servers,
             ),
         ):
             if isinstance(message, AssistantMessage):

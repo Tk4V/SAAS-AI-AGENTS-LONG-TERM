@@ -42,6 +42,7 @@ SDK_ALLOWED_TOOLS = [
     "Bash(git diff*)",
     "Bash(python -m py_compile*)",
     "Agent",
+    "mcp__github__*",
 ]
 SDK_MODEL = "claude-sonnet-4-6"
 SDK_MAX_TURNS = 50
