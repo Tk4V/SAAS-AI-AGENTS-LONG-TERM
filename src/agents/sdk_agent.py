@@ -235,11 +235,15 @@ class SDKAgent(BaseAgent):
         """Log tool execution results returned to the SDK."""
         for block in getattr(message, "content", []) or []:
             if hasattr(block, "tool_use_id"):
+                content = str(getattr(block, "content", ""))
+                is_error = getattr(block, "is_error", False)
                 self._logger.info(
                     "tool_result",
                     turn=turn,
-                    is_error=getattr(block, "is_error", False),
-                    result_length=len(str(getattr(block, "content", ""))),
+                    is_error=is_error,
+                    result_length=len(content),
+                    tool_use_id=getattr(block, "tool_use_id", None),
+                    content=content[:2000] if is_error else content[:200],
                 )
 
     @staticmethod
