@@ -17,6 +17,7 @@ from __future__ import annotations
 from src.agent_tools.mcp.jira import jira_mcp_server
 from src.integrations._shared.config import OAuthProviderConfig
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
+from src.integrations.jira.account_resolver import resolve_jira_account
 from src.integrations.jira.compliance import install_jira_compliance
 
 JIRA = OAuthProviderConfig(
@@ -43,4 +44,5 @@ JIRA = OAuthProviderConfig(
     api_base_url="https://api.atlassian.com",
     compliance_installer=install_jira_compliance,
     mcp_factory=jira_mcp_server,
+    post_callback_hook=resolve_jira_account,
 )

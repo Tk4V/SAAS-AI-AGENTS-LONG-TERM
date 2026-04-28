@@ -16,6 +16,7 @@ from src.integrations._shared.config import (
     ComplianceInstaller,
     MCPFactory,
     OAuthProviderConfig,
+    PostCallbackHook,
     TokenRevoker,
 )
 from src.integrations._shared.exceptions import (
@@ -39,6 +40,7 @@ __all__ = [
     "CallbackResult",
     "ComplianceInstaller",
     "MCPFactory",
+    "PostCallbackHook",
     "IntegrationCategory",
     "IntegrationKind",
     "OAuthAdapter",

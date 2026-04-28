@@ -1,9 +1,9 @@
-"""Atlassian resource discovery after OAuth.
+"""Atlassian account discovery — resolves cloud_id and site_url after OAuth.
 
-After the OAuth callback we call the accessible-resources endpoint to find
-out which Jira cloud instances the token has access to. The first result's
-URL and cloud ID are stored in the credential's raw_metadata so agents can
-use them to configure the Jira MCP server without asking the user.
+Called as ``OAuthProviderConfig.post_callback_hook`` by ``OAuthService.handle_callback``
+immediately after the token exchange. The returned dict is merged into
+``raw_metadata`` on the stored credential, making cloud_id and site_url
+available to the Jira MCP factory without prompting the user.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ _ACCESSIBLE_RESOURCES_URL = (
 )
 
 
-async def fetch_cloud_metadata(access_token: str) -> dict[str, str]:
+async def resolve_jira_account(access_token: str) -> dict[str, str]:
     """Call Atlassian's accessible-resources endpoint and return site metadata.
 
     Returns a dict with ``cloud_id`` and ``site_url`` for the first accessible
