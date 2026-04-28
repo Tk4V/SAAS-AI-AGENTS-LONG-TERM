@@ -8,14 +8,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 
 if TYPE_CHECKING:
     from src.db.models.user_credential import UserOAuthCredential
 
 
 class OAuthStartResponse(BaseModel):
-    provider: GitProviderKind
+    provider: ProviderKind
     authorization_url: str = Field(
         description="URL the frontend must redirect the browser to.",
     )
@@ -25,7 +25,7 @@ class IntegrationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    provider: GitProviderKind
+    provider: ProviderKind
     scopes: list[str]
     granted_at: datetime
 

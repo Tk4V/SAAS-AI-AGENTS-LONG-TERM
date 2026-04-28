@@ -21,12 +21,13 @@ if TYPE_CHECKING:
     from src.db.models.task import Task
 
 
-class GitProviderKind(str, enum.Enum):
-    """Supported git providers. M1 ships GitHub only; the enum exists so we can
-    add GitLab or Bitbucket without a column type change later.
+class ProviderKind(str, enum.Enum):
+    """Supported integration providers. The enum exists so we can add new
+    providers without a column type change later.
     """
 
     GITHUB = "github"
+    JIRA = "jira"
 
 
 class Project(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
@@ -71,10 +72,10 @@ class ProjectRepo(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
-    provider: Mapped[GitProviderKind] = mapped_column(
-        Enum(GitProviderKind, name="git_provider_kind", values_callable=lambda e: [x.value for x in e]),
+    provider: Mapped[ProviderKind] = mapped_column(
+        Enum(ProviderKind, name="git_provider_kind", values_callable=lambda e: [x.value for x in e]),
         nullable=False,
-        default=GitProviderKind.GITHUB,
+        default=ProviderKind.GITHUB,
     )
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     default_branch: Mapped[str] = mapped_column(String(255), nullable=False, default="main")

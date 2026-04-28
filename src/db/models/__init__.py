@@ -4,12 +4,12 @@
 side-effect registration. Adding a new model means appending it here.
 """
 
-from src.db.models.project import GitProviderKind, Project, ProjectRepo
+from src.db.models.project import ProviderKind, Project, ProjectRepo
 from src.db.models.task import Task, TaskStatus
 from src.db.models.user_credential import UserOAuthCredential
 
 __all__ = [
-    "GitProviderKind",
+    "ProviderKind",
     "Project",
     "ProjectRepo",
     "Task",

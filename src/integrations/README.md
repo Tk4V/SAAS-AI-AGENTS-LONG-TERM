@@ -25,7 +25,7 @@ of new code for a standards-compliant OAuth provider.
 
 ### 1. Pick a kind
 
-`IntegrationKind` is an alias for the canonical `GitProviderKind` enum that
+`IntegrationKind` is an alias for the canonical `ProviderKind` enum that
 backs the database column. Renaming the enum is a separate migration; until
 that lands, every new provider value also needs the database `git_provider_kind`
 type extended via Alembic.
@@ -153,7 +153,7 @@ back to RFC 7009 via `revoke_url`, and is a no-op otherwise.
 
 | File | One-line purpose |
 |------|------------------|
-| `kinds.py` | `IntegrationKind` (alias of `GitProviderKind`) and `IntegrationCategory` enums. |
+| `kinds.py` | `IntegrationKind` (alias of `ProviderKind`) and `IntegrationCategory` enums. |
 | `config.py` | `OAuthProviderConfig` dataclass — the shape of every provider declaration. |
 | `tokens.py` | `TokenBundle` — normalized OAuth token data (access, refresh, expiry, scopes). |
 | `state.py` | `OAuthStateSigner` — JWT-signs the OAuth state parameter (with optional PKCE verifier). |

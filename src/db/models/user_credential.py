@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UserScopeMixin
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 
 
 class UserOAuthCredential(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
@@ -35,9 +35,9 @@ class UserOAuthCredential(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMi
         ),
     )
 
-    provider: Mapped[GitProviderKind] = mapped_column(
+    provider: Mapped[ProviderKind] = mapped_column(
         Enum(
-            GitProviderKind,
+            ProviderKind,
             name="git_provider_kind",
             create_type=False,
             values_callable=lambda e: [x.value for x in e],

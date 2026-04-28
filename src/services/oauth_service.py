@@ -18,7 +18,7 @@ from __future__ import annotations
 import structlog
 
 from src.config import Settings, get_settings
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 from src.db.models.user_credential import UserOAuthCredential
 from src.db.queries.user_credential_query import UserOAuthCredentialRepository
 from src.integrations._shared import (
@@ -54,7 +54,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> str:
         """Build the provider's authorization URL. State is embedded in the URL."""
         request = self._adapter.build_authorize_request(
@@ -68,7 +68,7 @@ class OAuthService:
     async def handle_callback(
         self,
         *,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         code: str,
         state: str,
     ) -> UserOAuthCredential:
@@ -113,7 +113,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> str:
         credential = await self._repo.get(user_id=user_id, provider=provider)
         return self._cipher.decrypt(credential.token_encrypted)
@@ -122,7 +122,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> list[dict]:
         """Fetch the user's repositories from the connected provider.
 
@@ -130,7 +130,7 @@ class OAuthService:
         we will dispatch by `provider` here. Keeping this in the service is a
         temporary convenience for the frontend integrations page.
         """
-        if provider is GitProviderKind.GITHUB:
+        if provider is ProviderKind.GITHUB:
             from src.integrations._shared.token_resolver import TokenResolver
             resolver = TokenResolver(cipher=self._cipher)
             api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
@@ -144,11 +144,11 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         repo_url: str,
     ) -> list[str]:
         """Fetch branch names for a repository at the given provider."""
-        if provider is GitProviderKind.GITHUB:
+        if provider is ProviderKind.GITHUB:
             from src.integrations._shared.token_resolver import TokenResolver
             from src.integrations.github.git_ops import GitHubGitOps
             resolver = TokenResolver(cipher=self._cipher)
@@ -164,7 +164,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> None:
         credential = await self._repo.get(user_id=user_id, provider=provider)
         token = self._cipher.decrypt(credential.token_encrypted)
@@ -182,7 +182,7 @@ class OAuthService:
             "oauth.revoke.completed", user_id=user_id, provider=provider.value
         )
 
-    def _callback_url(self, provider: GitProviderKind) -> str:
+    def _callback_url(self, provider: ProviderKind) -> str:
         return (
             f"{self._settings.oauth_callback_base_url.rstrip('/')}"
             f"{self._settings.api_prefix}/auth/oauth/{provider.value}/callback"
@@ -191,7 +191,7 @@ class OAuthService:
     def build_callback_redirect_url(
         self,
         *,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         success: bool,
         error_code: str | None = None,
     ) -> str:

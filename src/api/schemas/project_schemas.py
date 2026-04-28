@@ -8,14 +8,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 
 if TYPE_CHECKING:
     from src.db.models.project import Project, ProjectRepo
 
 
 class ProjectRepoBase(BaseModel):
-    provider: GitProviderKind = GitProviderKind.GITHUB
+    provider: ProviderKind = ProviderKind.GITHUB
     url: HttpUrl
     default_branch: str = Field(default="main", min_length=1, max_length=255)
 

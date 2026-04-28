@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 from src.db.models.user_credential import UserOAuthCredential
 from src.utils.exceptions import NotFoundError
 
@@ -21,7 +21,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         token_encrypted: str,
         scopes: str,
         refresh_token_encrypted: str | None = None,
@@ -67,7 +67,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> UserOAuthCredential:
         credential = await self._find(user_id=user_id, provider=provider)
         if credential is None:
@@ -88,7 +88,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> None:
         credential = await self.get(user_id=user_id, provider=provider)
         await self._session.delete(credential)
@@ -97,7 +97,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> UserOAuthCredential | None:
         stmt = select(UserOAuthCredential).where(
             UserOAuthCredential.user_id == user_id,
