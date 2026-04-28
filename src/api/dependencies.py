@@ -14,18 +14,23 @@ from fastapi import Depends, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.utils.crypto import TokenCipher
-from src.utils.exceptions import AuthenticationError
+from src.app_context import app_context
 from src.db.queries.project_query import ProjectRepository
 from src.db.queries.task_query import TaskRepository
 from src.db.queries.user_credential_query import UserOAuthCredentialRepository
 from src.db.session import db
+from src.integrations._shared import (
+    AuthlibClientFactory,
+    OAuthAdapter,
+    OAuthStateSigner,
+    ProviderCatalog,
+)
 from src.services.auth_service import AuthService, CurrentUser
-from src.services.oauth_service import OAuthService, OAuthStateSigner
+from src.services.oauth_service import OAuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
-from src.integrations import toolbox as tool_singleton
-from src.integrations.git.factory import GitProviderFactory
+from src.utils.crypto import TokenCipher
+from src.utils.exceptions import AuthenticationError
 
 bearer_scheme = HTTPBearer(
     bearerFormat="JWT",
@@ -89,13 +94,6 @@ def get_project_repository(session: SessionDep) -> ProjectRepository:
 ProjectRepositoryDep = Annotated[ProjectRepository, Depends(get_project_repository)]
 
 
-def get_git_factory() -> GitProviderFactory:
-    return tool_singleton.git
-
-
-GitFactoryDep = Annotated[GitProviderFactory, Depends(get_git_factory)]
-
-
 def get_task_repository(session: SessionDep) -> TaskRepository:
     return TaskRepository(session)
 
@@ -114,7 +112,7 @@ TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 
 
 def get_token_cipher() -> TokenCipher:
-    return tool_singleton.cipher
+    return app_context.cipher
 
 
 TokenCipherDep = Annotated[TokenCipher, Depends(get_token_cipher)]
@@ -130,24 +128,43 @@ UserOAuthCredentialRepositoryDep = Annotated[
 ]
 
 
-def get_oauth_state_signer() -> OAuthStateSigner:
-    return OAuthStateSigner()
+# OAuth framework — built once per request from process-wide singletons.
+# `ProviderCatalog` is stateless; `AuthlibClientFactory` caches httpx pools
+# per provider; `OAuthStateSigner` is cheap to construct. Reusing process-
+# level instances would let one request leak Authlib client state to
+# another, so we keep them request-scoped.
+
+def get_provider_catalog() -> ProviderCatalog:
+    return ProviderCatalog()
 
 
-OAuthStateSignerDep = Annotated[OAuthStateSigner, Depends(get_oauth_state_signer)]
+ProviderCatalogDep = Annotated[ProviderCatalog, Depends(get_provider_catalog)]
+
+
+def get_oauth_adapter(catalog: ProviderCatalogDep) -> OAuthAdapter:
+    factory = AuthlibClientFactory(catalog_lookup=catalog.get)
+    signer = OAuthStateSigner()
+    return OAuthAdapter(
+        catalog_lookup=catalog.get,
+        client_factory=factory,
+        state_signer=signer,
+    )
+
+
+OAuthAdapterDep = Annotated[OAuthAdapter, Depends(get_oauth_adapter)]
 
 
 def get_oauth_service(
     repository: UserOAuthCredentialRepositoryDep,
-    git_factory: GitFactoryDep,
+    adapter: OAuthAdapterDep,
+    catalog: ProviderCatalogDep,
     cipher: TokenCipherDep,
-    state_signer: OAuthStateSignerDep,
 ) -> OAuthService:
     return OAuthService(
         repository=repository,
-        git_factory=git_factory,
+        adapter=adapter,
+        catalog=catalog,
         cipher=cipher,
-        state_signer=state_signer,
     )
 
 
@@ -157,9 +174,8 @@ OAuthServiceDep = Annotated[OAuthService, Depends(get_oauth_service)]
 def get_project_service(
     repo: ProjectRepositoryDep,
     oauth: OAuthServiceDep,
-    git_factory: GitFactoryDep,
 ) -> ProjectService:
-    return ProjectService(repository=repo, oauth=oauth, git_factory=git_factory)
+    return ProjectService(repository=repo, oauth=oauth)
 
 
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]

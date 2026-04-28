@@ -1,5 +1,5 @@
 from src.services.auth_service import AuthService, CurrentUser
-from src.services.oauth_service import OAuthService, OAuthStateSigner
+from src.services.oauth_service import OAuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.webhook_service import WebhookService
@@ -8,7 +8,6 @@ __all__ = [
     "AuthService",
     "CurrentUser",
     "OAuthService",
-    "OAuthStateSigner",
     "ProjectService",
     "TaskService",
     "WebhookService",
