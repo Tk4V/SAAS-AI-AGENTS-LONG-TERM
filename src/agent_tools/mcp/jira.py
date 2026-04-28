@@ -10,9 +10,10 @@ package in an isolated environment without polluting the app's virtualenv.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 
-def jira_mcp_server(token: str, site_url: str, cloud_id: str) -> dict[str, object]:
+def jira_mcp_server(token: str, raw_metadata: dict[str, Any]) -> dict[str, object]:
     """Return a stdio MCP server config for Jira, authenticated with *token*.
 
     Uses ``sys.executable -c "from mcp_atlassian import main; main()"`` —
@@ -27,13 +28,22 @@ def jira_mcp_server(token: str, site_url: str, cloud_id: str) -> dict[str, objec
     Args:
         token: Atlassian OAuth access token with ``read:jira-work``,
             ``write:jira-work``, and ``read:jira-user`` scopes.
-        site_url: Jira cloud base URL, e.g. ``https://yourcompany.atlassian.net``.
-        cloud_id: Atlassian cloud ID stored in
-            ``user_oauth_credentials.raw_metadata["cloud_id"]`` after OAuth.
+        raw_metadata: Credential metadata stored after OAuth. Must contain
+            ``site_url`` (e.g. ``https://yourcompany.atlassian.net``) and
+            ``cloud_id`` (Atlassian cloud ID). Raises ``ValueError`` if either
+            is missing — ``BaseAgent.build_user_mcp_servers`` catches this and
+            skips the provider with a warning log.
 
     Returns:
         A ``McpStdioServerConfig`` dict ready for use in ``ClaudeAgentOptions``.
     """
+    site_url = raw_metadata.get("site_url") or ""
+    cloud_id = raw_metadata.get("cloud_id") or ""
+    if not site_url or not cloud_id:
+        raise ValueError(
+            "Jira raw_metadata is missing 'site_url' or 'cloud_id'. "
+            "These are stored during the OAuth callback — reconnect Jira to fix this."
+        )
     return {
         "type": "stdio",
         "command": sys.executable,

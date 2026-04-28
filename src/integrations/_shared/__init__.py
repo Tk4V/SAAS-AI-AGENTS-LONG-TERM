@@ -14,6 +14,7 @@ from src.integrations._shared.api_base import BaseApiClient
 from src.integrations._shared.authlib_factory import AuthlibClientFactory
 from src.integrations._shared.config import (
     ComplianceInstaller,
+    MCPFactory,
     OAuthProviderConfig,
     TokenRevoker,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "BaseApiClient",
     "CallbackResult",
     "ComplianceInstaller",
+    "MCPFactory",
     "IntegrationCategory",
     "IntegrationKind",
     "OAuthAdapter",
