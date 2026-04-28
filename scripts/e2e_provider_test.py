@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """Provider-specific end-to-end test: pick a provider, run its OAuth + task flow.
 
-Each provider has its own OAuth flow and project setup. Jira tasks need no
-repository (ticket management only); GitHub tasks require a repo selection.
-
 Usage:
-    # Jira — create tickets for deckbuilder.ai (uses built-in default prompt)
-    python scripts/e2e_provider_test.py --provider jira
-
-    # Jira — custom prompt
-    python scripts/e2e_provider_test.py --provider jira \
-        --prompt "For myproject.atlassian.net space create a bug ticket for the login page"
-
-    # GitHub — code pipeline (interactive repo selection)
+    # GitHub only — code pipeline (interactive repo selection)
     python scripts/e2e_provider_test.py --provider github \
         --prompt "Fix the authentication bug"
 
+    # GitHub + Jira — analyze repo code and create Jira tickets from it
+    python scripts/e2e_provider_test.py --provider github+jira
+
+    # GitHub + Jira — custom prompt
+    python scripts/e2e_provider_test.py --provider github+jira \
+        --prompt "Analyze this repo and create Jira tickets for the top 3 bugs found"
+
 Prerequisites:
     1. App running: docker compose -f docker-compose-dev.yaml up --build
-    2. OAuth app registered for the chosen provider with the correct callback URL
-    3. .env filled with the provider's CLIENT_ID / CLIENT_SECRET and FERNET_KEY
+    2. OAuth apps registered for the chosen providers with the correct callback URLs
+    3. .env filled with CLIENT_ID / CLIENT_SECRET for each provider and FERNET_KEY
 """
 
 from __future__ import annotations
@@ -43,17 +40,17 @@ MAX_POLL_ATTEMPTS = 180
 AUTO_RETRY_LIMIT = 2
 TERMINAL_STATUSES = {"completed", "awaiting_ci", "needs_human", "failed"}
 
-SUPPORTED_PROVIDERS = ("jira", "github")
+SUPPORTED_PROVIDERS = ("github", "github+jira")
 
 # Default prompts used when --prompt is not supplied
 PROVIDER_DEFAULT_PROMPTS: dict[str, str] = {
-    "jira": (
-        "For deckbuilder.ai space create tickets to add new feature: "
-        "add tickets for QA, back-end, front-end, and tech lead so they all have "
-        "1 task related to the feature of project creation. "
-        "Don't assign any ticket to anyone just yet."
-    ),
     "github": "Analyze this repository and suggest improvements",
+    "github+jira": (
+        "Analyze this repository's code and create Jira tickets for the top 3 "
+        "improvements or bugs you find. For each ticket include: a clear summary, "
+        "a description of the issue with relevant file paths, and suggested fix. "
+        "Don't assign tickets to anyone."
+    ),
 }
 
 
@@ -382,25 +379,6 @@ class TaskRunner:
 # ---------------------------------------------------------------------------
 
 
-async def _jira_flow(
-    http: httpx.AsyncClient,
-    config: E2EConfig,
-    headers: dict[str, str],
-    prompt: str,
-    verbose: bool,
-) -> None:
-    """Jira flow: OAuth → project (no repo) → ticket-creation task."""
-    base_url = config.base_url
-    await OAuthFlow.ensure_connected(http, base_url, headers, provider="jira")
-    project_id = await ProjectCreator.create(http, base_url, headers)
-    await TaskRunner.run(
-        http, base_url, headers,
-        project_id=project_id,
-        prompt=prompt,
-        verbose=verbose,
-    )
-
-
 async def _github_flow(
     http: httpx.AsyncClient,
     config: E2EConfig,
@@ -421,9 +399,30 @@ async def _github_flow(
     )
 
 
+async def _github_jira_flow(
+    http: httpx.AsyncClient,
+    config: E2EConfig,
+    headers: dict[str, str],
+    prompt: str,
+    verbose: bool,
+) -> None:
+    """GitHub + Jira flow: OAuth both → pick repo → project → analyze code and create tickets."""
+    base_url = config.base_url
+    await OAuthFlow.ensure_connected(http, base_url, headers, provider="github")
+    await OAuthFlow.ensure_connected(http, base_url, headers, provider="jira")
+    repo = await RepoSelector.pick(http, base_url, headers)
+    project_id = await ProjectCreator.create(http, base_url, headers, repo=repo)
+    await TaskRunner.run(
+        http, base_url, headers,
+        project_id=project_id,
+        prompt=prompt,
+        verbose=verbose,
+    )
+
+
 _PROVIDER_FLOWS = {
-    "jira": _jira_flow,
     "github": _github_flow,
+    "github+jira": _github_jira_flow,
 }
 
 
@@ -481,7 +480,7 @@ def main() -> None:
 
     print()
     print("=" * 60)
-    print(f"  Clyde AI — {args.provider.title()} E2E Test")
+    print(f"  Clyde AI — {args.provider.upper()} E2E Test")
     print("=" * 60)
     print()
     Logger.info(f"Provider : {args.provider}")
