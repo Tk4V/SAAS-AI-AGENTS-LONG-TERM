@@ -93,3 +93,20 @@ class TokenResolver:
                 return new_bundle.access_token
 
             return cipher.decrypt(credential.token_encrypted)
+
+    async def resolve_jira(self, *, user_id: int) -> tuple[str, str, str] | None:
+        """Return (access_token, site_url, cloud_id) or None if Jira is not connected."""
+        from src.utils.exceptions import NotFoundError
+
+        cipher = self._get_cipher()
+        try:
+            async with self._database.session_scope() as session:
+                repository = UserOAuthCredentialRepository(session)
+                cred = await repository.get(user_id=user_id, provider=IntegrationKind.JIRA)
+                site_url: str = cred.raw_metadata.get("site_url", "")
+                cloud_id: str = cred.raw_metadata.get("cloud_id", "")
+                if not site_url or not cloud_id:
+                    return None
+                return cipher.decrypt(cred.token_encrypted), site_url, cloud_id
+        except NotFoundError:
+            return None

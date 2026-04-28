@@ -9,11 +9,10 @@ Usage:
         --repo https://github.com/owner/repo \
         --prompt "Add a health check endpoint"
 
-    # Code task + Jira — analyze repo and create tickets (requires Jira connected in DB)
+    # Code task + Jira — analyze repo and create tickets (requires Jira OAuth seeded in DB)
     python scripts/test_developer_agent.py \
         --repo https://github.com/owner/repo \
-        --prompt "Analyze this repo and create Jira tickets for the top 3 improvements" \
-        --with-jira
+        --prompt "Analyze this repo and create Jira tickets for the top 3 improvements"
 
     # Different branch
     python scripts/test_developer_agent.py \
@@ -83,15 +82,8 @@ async def run_agent(args: argparse.Namespace) -> None:
     Logger.section("Developer Agent — Direct Test")
     Logger.info(f"User ID  : {args.user_id}")
     Logger.info(f"Repo     : {args.repo} @ {args.branch}")
-    Logger.info(f"Jira     : {'enabled' if args.with_jira else 'disabled (no --with-jira)'}")
+    Logger.info(f"Jira     : {'enabled' if args.with_jira else 'used if credential exists in DB'}")
     Logger.info(f"Prompt   : {args.prompt[:120]}")
-
-    if not args.with_jira:
-        # Monkey-patch resolve_jira_token to skip DB lookup so the agent
-        # runs cleanly without a Jira credential seeded.
-        DeveloperAgent.resolve_jira_token = lambda self, *, user_id: asyncio.coroutine(
-            lambda: None
-        )()
 
     print()
     Logger.info("Starting DeveloperAgent...")
@@ -144,11 +136,6 @@ def main() -> None:
     parser.add_argument("--repo", required=True, help="GitHub repo URL")
     parser.add_argument("--branch", default="main", help="Branch to clone (default: main)")
     parser.add_argument("--prompt", required=True, help="Task description for the agent")
-    parser.add_argument(
-        "--with-jira",
-        action="store_true",
-        help="Enable Jira MCP (requires Jira OAuth credential seeded for --user-id)",
-    )
     parser.add_argument(
         "--user-id",
         type=int,
