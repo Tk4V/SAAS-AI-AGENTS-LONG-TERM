@@ -38,7 +38,7 @@ class UserOAuthCredential(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMi
     provider: Mapped[ProviderKind] = mapped_column(
         Enum(
             ProviderKind,
-            name="git_provider_kind",
+            name="provider_kind",
             create_type=False,
             values_callable=lambda e: [x.value for x in e],
         ),

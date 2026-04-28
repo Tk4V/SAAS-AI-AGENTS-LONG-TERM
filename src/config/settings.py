@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     github_webhook_secret: SecretStr = SecretStr("")
     github_api_base: str = "https://api.github.com"
 
+    jira_oauth_client_id: SecretStr = SecretStr("")
+    jira_oauth_client_secret: SecretStr = SecretStr("")
+
     oauth_state_ttl_sec: int = 600
     oauth_callback_base_url: str = "http://localhost:8000"
     frontend_redirect_url: str = "http://localhost:3000/integrations"

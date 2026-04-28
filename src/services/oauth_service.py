@@ -132,7 +132,7 @@ class OAuthService:
         """
         if provider is ProviderKind.GITHUB:
             from src.integrations._shared.token_resolver import TokenResolver
-            resolver = TokenResolver(cipher=self._cipher)
+            resolver = TokenResolver(cipher=self._cipher, adapter=self._adapter)
             api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
             try:
                 return await api.list_repos()
@@ -151,7 +151,7 @@ class OAuthService:
         if provider is ProviderKind.GITHUB:
             from src.integrations._shared.token_resolver import TokenResolver
             from src.integrations.github.git_ops import GitHubGitOps
-            resolver = TokenResolver(cipher=self._cipher)
+            resolver = TokenResolver(cipher=self._cipher, adapter=self._adapter)
             coordinates = GitHubGitOps.parse_repo_url(repo_url)
             api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
             try:

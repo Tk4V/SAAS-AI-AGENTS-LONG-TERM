@@ -73,7 +73,7 @@ class ProjectRepo(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
     provider: Mapped[ProviderKind] = mapped_column(
-        Enum(ProviderKind, name="git_provider_kind", values_callable=lambda e: [x.value for x in e]),
+        Enum(ProviderKind, name="provider_kind", values_callable=lambda e: [x.value for x in e]),
         nullable=False,
         default=ProviderKind.GITHUB,
     )
