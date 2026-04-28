@@ -19,7 +19,6 @@ from typing import Any, ClassVar
 
 from claude_agent_sdk import AgentDefinition
 
-from src.agent_tools.mcp import github_mcp_server
 from src.agents.sdk_agent import SDKAgent
 from src.integrations.github import GitHubGitOps
 from src.utils.exceptions import PipelineError
@@ -45,6 +44,7 @@ class DeveloperAgent(SDKAgent):
         "Bash(python -m py_compile*)",
         "Agent",
         "mcp__github__*",
+        "mcp__jira__*",
     ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -84,7 +84,7 @@ class DeveloperAgent(SDKAgent):
             session_summary = await self.run_sdk_session(
                 prompt=description,
                 working_directory=primary_repo_path,
-                mcp_context={"github_token": github_token},
+                mcp_context={"user_id": user_id},
             )
 
             file_changes = await self._collect_file_changes(
@@ -111,13 +111,8 @@ class DeveloperAgent(SDKAgent):
             raise
 
     async def build_mcp_servers(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Inject the GitHub MCP server, authenticated with the per-task token."""
-        github_token = context.get("github_token")
-        if not github_token:
-            raise PipelineError(
-                "DeveloperAgent.build_mcp_servers requires a 'github_token' in mcp_context.",
-            )
-        return {"github": github_mcp_server(github_token)}
+        """Mount MCP servers for all integrations the user has connected."""
+        return await self.build_user_mcp_servers(user_id=context["user_id"])
 
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the Opus parent delegates to.
@@ -171,6 +166,7 @@ class DeveloperAgent(SDKAgent):
                     "Bash(git diff*)",
                     "Bash(python -m py_compile*)",
                     "mcp__github__*",
+                    "mcp__jira__*",
                 ],
                 model="sonnet",
             ),

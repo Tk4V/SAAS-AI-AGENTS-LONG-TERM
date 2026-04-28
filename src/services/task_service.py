@@ -94,7 +94,9 @@ class TaskService:
 
         try:
             state = dict(initial_state)
-            for agent_class in (DeveloperAgent, PublisherAgent):
+            pipeline = [DeveloperAgent, PublisherAgent]
+
+            for agent_class in pipeline:
                 agent = agent_class()
                 result = await agent(state)
                 state = {**state, **result}

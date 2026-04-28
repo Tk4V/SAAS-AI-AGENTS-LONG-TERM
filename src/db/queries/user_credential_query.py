@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 from src.db.models.user_credential import UserOAuthCredential
 from src.utils.exceptions import NotFoundError
 
@@ -21,7 +21,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         token_encrypted: str,
         scopes: str,
         refresh_token_encrypted: str | None = None,
@@ -63,11 +63,35 @@ class UserOAuthCredentialRepository:
         await self._session.flush()
         return credential
 
+    async def update_tokens(
+        self,
+        *,
+        user_id: int,
+        provider: ProviderKind,
+        token_encrypted: str,
+        refresh_token_encrypted: str | None,
+        expires_at: datetime | None,
+        scopes: str,
+    ) -> UserOAuthCredential:
+        """Overwrite only the token columns after a refresh cycle.
+
+        Preserves provider_account_id, account_label, and raw_metadata
+        (e.g. Jira cloudId) that were set during the original callback.
+        Raises NotFoundError if the credential row doesn't exist.
+        """
+        credential = await self.get(user_id=user_id, provider=provider)
+        credential.token_encrypted = token_encrypted
+        credential.refresh_token_encrypted = refresh_token_encrypted
+        credential.expires_at = expires_at
+        credential.scopes = scopes
+        await self._session.flush()
+        return credential
+
     async def get(
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> UserOAuthCredential:
         credential = await self._find(user_id=user_id, provider=provider)
         if credential is None:
@@ -88,7 +112,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> None:
         credential = await self.get(user_id=user_id, provider=provider)
         await self._session.delete(credential)
@@ -97,7 +121,7 @@ class UserOAuthCredentialRepository:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> UserOAuthCredential | None:
         stmt = select(UserOAuthCredential).where(
             UserOAuthCredential.user_id == user_id,

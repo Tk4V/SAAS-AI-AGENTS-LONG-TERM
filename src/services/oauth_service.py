@@ -18,7 +18,7 @@ from __future__ import annotations
 import structlog
 
 from src.config import Settings, get_settings
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 from src.db.models.user_credential import UserOAuthCredential
 from src.db.queries.user_credential_query import UserOAuthCredentialRepository
 from src.integrations._shared import (
@@ -54,7 +54,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> str:
         """Build the provider's authorization URL. State is embedded in the URL."""
         request = self._adapter.build_authorize_request(
@@ -68,7 +68,7 @@ class OAuthService:
     async def handle_callback(
         self,
         *,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         code: str,
         state: str,
     ) -> UserOAuthCredential:
@@ -90,6 +90,29 @@ class OAuthService:
             else None
         )
 
+        raw_metadata = dict(bundle.raw)
+
+        cfg = self._catalog.get(provider)
+        if cfg.post_callback_hook is not None:
+            try:
+                extra = await cfg.post_callback_hook(bundle.access_token)
+                raw_metadata.update(extra)
+                self._logger.info(
+                    "oauth.post_callback_hook.success",
+                    user_id=result.user_id,
+                    provider=provider.value,
+                    keys=list(extra.keys()),
+                )
+            except Exception as exc:
+                # Non-fatal: credential is saved without the extra metadata.
+                # The relevant MCP server will be skipped by build_user_mcp_servers.
+                self._logger.warning(
+                    "oauth.post_callback_hook.failed",
+                    user_id=result.user_id,
+                    provider=provider.value,
+                    error=str(exc),
+                )
+
         credential = await self._repo.upsert(
             user_id=result.user_id,
             provider=provider,
@@ -97,7 +120,7 @@ class OAuthService:
             refresh_token_encrypted=encrypted_refresh,
             expires_at=bundle.expires_at,
             scopes=",".join(bundle.scopes),
-            raw_metadata=dict(bundle.raw),
+            raw_metadata=raw_metadata,
         )
         self._logger.info(
             "oauth.callback.success",
@@ -113,7 +136,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> str:
         credential = await self._repo.get(user_id=user_id, provider=provider)
         return self._cipher.decrypt(credential.token_encrypted)
@@ -122,7 +145,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> list[dict]:
         """Fetch the user's repositories from the connected provider.
 
@@ -130,9 +153,9 @@ class OAuthService:
         we will dispatch by `provider` here. Keeping this in the service is a
         temporary convenience for the frontend integrations page.
         """
-        if provider is GitProviderKind.GITHUB:
+        if provider is ProviderKind.GITHUB:
             from src.integrations._shared.token_resolver import TokenResolver
-            resolver = TokenResolver(cipher=self._cipher)
+            resolver = TokenResolver(cipher=self._cipher, adapter=self._adapter)
             api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
             try:
                 return await api.list_repos()
@@ -144,14 +167,14 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         repo_url: str,
     ) -> list[str]:
         """Fetch branch names for a repository at the given provider."""
-        if provider is GitProviderKind.GITHUB:
+        if provider is ProviderKind.GITHUB:
             from src.integrations._shared.token_resolver import TokenResolver
             from src.integrations.github.git_ops import GitHubGitOps
-            resolver = TokenResolver(cipher=self._cipher)
+            resolver = TokenResolver(cipher=self._cipher, adapter=self._adapter)
             coordinates = GitHubGitOps.parse_repo_url(repo_url)
             api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
             try:
@@ -164,7 +187,7 @@ class OAuthService:
         self,
         *,
         user_id: int,
-        provider: GitProviderKind,
+        provider: ProviderKind,
     ) -> None:
         credential = await self._repo.get(user_id=user_id, provider=provider)
         token = self._cipher.decrypt(credential.token_encrypted)
@@ -182,7 +205,7 @@ class OAuthService:
             "oauth.revoke.completed", user_id=user_id, provider=provider.value
         )
 
-    def _callback_url(self, provider: GitProviderKind) -> str:
+    def _callback_url(self, provider: ProviderKind) -> str:
         return (
             f"{self._settings.oauth_callback_base_url.rstrip('/')}"
             f"{self._settings.api_prefix}/auth/oauth/{provider.value}/callback"
@@ -191,7 +214,7 @@ class OAuthService:
     def build_callback_redirect_url(
         self,
         *,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         success: bool,
         error_code: str | None = None,
     ) -> str:

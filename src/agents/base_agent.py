@@ -105,3 +105,42 @@ class BaseAgent(ABC):
         return await self._token_resolver.resolve(
             user_id=user_id, kind=IntegrationKind.GITHUB
         )
+
+    async def build_user_mcp_servers(self, *, user_id: int) -> dict[str, Any]:
+        """Mount MCP servers for every integration the user has connected.
+
+        Iterates the provider catalog, skips providers without an
+        ``mcp_factory``, skips providers the user has not connected, and
+        silently skips (with a warning log) any factory that raises — so a
+        misconfigured credential never blocks the other servers from mounting.
+
+        Returns a dict ready for ``ClaudeAgentOptions.mcp_servers``, keyed by
+        ``IntegrationKind.value`` (e.g. ``"github"``, ``"jira"``).
+        """
+        from src.db.queries.user_credential_query import UserOAuthCredentialRepository
+        from src.db.session import db
+        from src.integrations._shared.registry import ProviderCatalog
+
+        catalog = ProviderCatalog()
+        async with db.session_scope() as session:
+            creds = await UserOAuthCredentialRepository(session).list_for_user(user_id=user_id)
+
+        cipher = self._ctx.cipher
+        cred_by_kind = {c.provider: c for c in creds}
+        servers: dict[str, Any] = {}
+
+        for cfg in catalog.all():
+            if cfg.mcp_factory is None:
+                continue
+            cred = cred_by_kind.get(cfg.kind)
+            if cred is None:
+                continue
+            try:
+                token = cipher.decrypt(cred.token_encrypted)
+                servers[cfg.kind.value] = cfg.mcp_factory(token, dict(cred.raw_metadata or {}))
+            except Exception as exc:
+                self._logger.warning(
+                    "mcp.factory_failed", provider=cfg.kind.value, error=str(exc)
+                )
+
+        return servers

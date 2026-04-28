@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.utils.exceptions import AlreadyExistsError, NotFoundError
-from src.db.models.project import GitProviderKind, Project, ProjectRepo
+from src.db.models.project import ProviderKind, Project, ProjectRepo
 
 
 class ProjectRepository:
@@ -113,7 +113,7 @@ class ProjectRepository:
         *,
         user_id: int,
         project_id: UUID,
-        provider: GitProviderKind,
+        provider: ProviderKind,
         url: str,
         default_branch: str,
     ) -> ProjectRepo:

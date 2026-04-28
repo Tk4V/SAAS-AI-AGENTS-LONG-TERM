@@ -16,6 +16,7 @@ Anything dynamic (cloning a repo, opening a PR, listing branches) lives in
 
 from __future__ import annotations
 
+from src.agent_tools.mcp.github import github_mcp_server
 from src.integrations._shared.config import OAuthProviderConfig
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
 from src.integrations.github.revoker import revoke_github_token
@@ -38,4 +39,5 @@ GITHUB = OAuthProviderConfig(
     token_endpoint_auth_method="client_secret_post",
     api_base_url="https://api.github.com",
     custom_revoker=revoke_github_token,
+    mcp_factory=github_mcp_server,
 )

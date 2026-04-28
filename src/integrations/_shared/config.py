@@ -20,6 +20,26 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+MCPFactory = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+PostCallbackHook = Callable[[str], Awaitable[dict[str, Any]]]
+"""Post-OAuth callback hook: ``(access_token,) → extra_raw_metadata``.
+
+Called by ``OAuthService.handle_callback`` immediately after the token
+exchange. The returned dict is merged into ``raw_metadata`` on the stored
+credential. Use this for any provider-specific discovery that must run once
+at connect time (e.g. Atlassian cloud_id + site_url, Salesforce instance_url,
+Slack team_id). Returning ``{}`` is valid — the hook is a no-op in that case.
+"""
+"""MCP server factory: ``(access_token, raw_metadata) → McpStdioServerConfig dict``.
+
+Each provider that exposes an MCP server declares one function with this
+signature and wires it into ``OAuthProviderConfig.mcp_factory``.
+``BaseAgent.build_user_mcp_servers`` calls every registered factory for
+credentials the user has connected — agents never need to know which
+providers exist or what fields each one requires.
+"""
+
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
 
 ComplianceInstaller = Callable[[Any], None]
@@ -87,6 +107,18 @@ class OAuthProviderConfig:
     # revocation endpoint. The function takes the plaintext access token
     # and is responsible for the entire revocation request.
     custom_revoker: TokenRevoker | None = None
+
+    # MCP server factory. When set, BaseAgent.build_user_mcp_servers() calls
+    # this for every credential the user has connected, producing an entry in
+    # ClaudeAgentOptions.mcp_servers. Leave None for providers that have no
+    # MCP server (e.g. identity providers used only for auth).
+    mcp_factory: MCPFactory | None = None
+
+    # Post-callback hook. When set, OAuthService.handle_callback() calls this
+    # with the fresh access token and merges the returned dict into raw_metadata
+    # before persisting the credential. Use for provider-specific discovery
+    # (Atlassian cloud_id, Salesforce instance_url, etc.).
+    post_callback_hook: PostCallbackHook | None = None
 
     def __post_init__(self) -> None:
         has_endpoints = bool(self.authorize_url and self.token_url)

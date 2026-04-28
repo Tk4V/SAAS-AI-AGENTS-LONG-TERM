@@ -20,7 +20,7 @@ from src.api.schemas.auth_schemas import (
     OAuthStartResponse,
 )
 from src.utils.exceptions import AppError
-from src.db.models.project import GitProviderKind
+from src.db.models.project import ProviderKind
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,7 +31,7 @@ class OAuthView:
     @staticmethod
     @router.get("/oauth/{provider}/start", response_model=OAuthStartResponse)
     async def start(
-        provider: GitProviderKind,
+        provider: ProviderKind,
         user: CurrentUserDep,
         service: OAuthServiceDep,
     ) -> OAuthStartResponse:
@@ -42,7 +42,7 @@ class OAuthView:
     @staticmethod
     @router.get("/oauth/{provider}/callback", include_in_schema=False)
     async def callback(
-        provider: GitProviderKind,
+        provider: ProviderKind,
         service: OAuthServiceDep,
         code: str = Query(...),
         state: str = Query(...),
@@ -79,7 +79,7 @@ class IntegrationView:
     @staticmethod
     @router.delete("/integrations/{provider}", status_code=status.HTTP_204_NO_CONTENT)
     async def revoke(
-        provider: GitProviderKind,
+        provider: ProviderKind,
         user: CurrentUserDep,
         service: OAuthServiceDep,
     ) -> None:
@@ -89,7 +89,7 @@ class IntegrationView:
     @staticmethod
     @router.get("/integrations/{provider}/repos", response_model=GitRepoList)
     async def list_repos(
-        provider: GitProviderKind,
+        provider: ProviderKind,
         user: CurrentUserDep,
         service: OAuthServiceDep,
     ) -> GitRepoList:
