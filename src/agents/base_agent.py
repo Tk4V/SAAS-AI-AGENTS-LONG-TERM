@@ -105,3 +105,28 @@ class BaseAgent(ABC):
         return await self._token_resolver.resolve(
             user_id=user_id, kind=IntegrationKind.GITHUB
         )
+
+    async def resolve_jira_token(self, *, user_id: int) -> tuple[str, str] | None:
+        """Fetch the user's Jira token and cloud site URL.
+
+        Returns ``(access_token, site_url)`` or ``None`` if the user has not
+        connected Jira or if cloud metadata was not stored during the OAuth
+        callback. Callers should treat ``None`` as "Jira not available" and
+        skip Jira-specific behaviour gracefully.
+        """
+        from src.db.queries.user_credential_query import UserOAuthCredentialRepository
+        from src.db.session import db
+        from src.integrations._shared.kinds import IntegrationKind
+        from src.utils.exceptions import NotFoundError
+
+        try:
+            async with db.session_scope() as session:
+                repo = UserOAuthCredentialRepository(session)
+                cred = await repo.get(user_id=user_id, provider=IntegrationKind.JIRA)
+                site_url: str = cred.raw_metadata.get("site_url", "")
+                if not site_url:
+                    return None
+                token = self._ctx.cipher.decrypt(cred.token_encrypted)
+                return token, site_url
+        except NotFoundError:
+            return None

@@ -45,6 +45,7 @@ class DeveloperAgent(SDKAgent):
         "Bash(python -m py_compile*)",
         "Agent",
         "mcp__github__*",
+        "mcp__jira__*",
     ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -63,6 +64,7 @@ class DeveloperAgent(SDKAgent):
             raise PipelineError("Developer agent requires at least one repository.")
 
         github_token = await self.resolve_github_token(user_id=user_id)
+        jira_context = await self.resolve_jira_token(user_id=user_id)
         workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id}_"))
 
         try:
@@ -84,7 +86,11 @@ class DeveloperAgent(SDKAgent):
             session_summary = await self.run_sdk_session(
                 prompt=description,
                 working_directory=primary_repo_path,
-                mcp_context={"github_token": github_token},
+                mcp_context={
+                    "github_token": github_token,
+                    "jira_token": jira_context[0] if jira_context else None,
+                    "jira_site_url": jira_context[1] if jira_context else None,
+                },
             )
 
             file_changes = await self._collect_file_changes(
@@ -111,13 +117,28 @@ class DeveloperAgent(SDKAgent):
             raise
 
     async def build_mcp_servers(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Inject the GitHub MCP server, authenticated with the per-task token."""
+        """Inject MCP servers authenticated with per-task tokens.
+
+        GitHub is always required. Jira is optional — if the user has not
+        connected Jira the server is simply omitted and mcp__jira__* tools
+        are unavailable for this session.
+        """
+        from src.agent_tools.mcp import jira_mcp_server
+
         github_token = context.get("github_token")
         if not github_token:
             raise PipelineError(
                 "DeveloperAgent.build_mcp_servers requires a 'github_token' in mcp_context.",
             )
-        return {"github": github_mcp_server(github_token)}
+
+        servers: dict[str, Any] = {"github": github_mcp_server(github_token)}
+
+        jira_token = context.get("jira_token")
+        jira_site_url = context.get("jira_site_url")
+        if jira_token and jira_site_url:
+            servers["jira"] = jira_mcp_server(jira_token, jira_site_url)
+
+        return servers
 
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the Opus parent delegates to.
@@ -171,6 +192,7 @@ class DeveloperAgent(SDKAgent):
                     "Bash(git diff*)",
                     "Bash(python -m py_compile*)",
                     "mcp__github__*",
+                    "mcp__jira__*",
                 ],
                 model="sonnet",
             ),

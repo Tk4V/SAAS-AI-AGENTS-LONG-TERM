@@ -90,6 +90,28 @@ class OAuthService:
             else None
         )
 
+        raw_metadata = dict(bundle.raw)
+
+        # For Jira, fetch the cloud instance URL and ID so agents can connect
+        # the MCP server without asking the user for their site URL.
+        if provider is ProviderKind.JIRA:
+            from src.integrations.jira.resources import fetch_cloud_metadata
+            try:
+                cloud_meta = await fetch_cloud_metadata(bundle.access_token)
+                raw_metadata.update(cloud_meta)
+                self._logger.info(
+                    "jira.cloud_metadata_fetched",
+                    user_id=result.user_id,
+                    site_url=cloud_meta.get("site_url"),
+                )
+            except Exception as exc:
+                # Non-fatal: credential is still saved; agent will just skip Jira MCP.
+                self._logger.warning(
+                    "jira.accessible_resources_failed",
+                    user_id=result.user_id,
+                    error=str(exc),
+                )
+
         credential = await self._repo.upsert(
             user_id=result.user_id,
             provider=provider,
@@ -97,7 +119,7 @@ class OAuthService:
             refresh_token_encrypted=encrypted_refresh,
             expires_at=bundle.expires_at,
             scopes=",".join(bundle.scopes),
-            raw_metadata=dict(bundle.raw),
+            raw_metadata=raw_metadata,
         )
         self._logger.info(
             "oauth.callback.success",
