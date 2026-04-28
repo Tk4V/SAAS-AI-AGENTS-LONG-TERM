@@ -17,8 +17,8 @@ from src.agents.prompts.dev_team.publisher_prompts import (
     PR_CONTENT_TEMPLATE,
     SYSTEM_PROMPT,
 )
+from src.integrations.github import GitHubApiClient, GitHubGitOps
 from src.utils.exceptions import PipelineError
-from src.db.models.project import GitProviderKind
 
 
 class PublisherAgent(BaseAgent):
@@ -26,7 +26,7 @@ class PublisherAgent(BaseAgent):
 
     For each repository that contains diffs the agent configures git identity,
     creates (or checks out) a feature branch, pushes it, and then opens a PR
-    via the configured git provider.
+    via the GitHub REST API client.
     """
 
     name: ClassVar[str] = "publisher"
@@ -48,53 +48,59 @@ class PublisherAgent(BaseAgent):
             return {"pr_urls": {}, "events": []}
 
         token = await self.resolve_github_token(user_id=user_id)
-        provider = self.toolbox.git.for_kind(GitProviderKind.GITHUB)
+        api = GitHubApiClient(
+            user_id=user_id,
+            token_resolver=self.token_resolver,
+            http_client=self.clients.http,
+        )
 
         repo_map = {r.get("name", ""): r for r in repos}
         pr_urls: dict[str, str] = {}
 
-        for repo_name, changes in diffs.items():
-            repo_meta = repo_map.get(repo_name)
-            if not repo_meta:
-                continue
+        try:
+            for repo_name, changes in diffs.items():
+                repo_meta = repo_map.get(repo_name)
+                if not repo_meta:
+                    continue
 
-            local_path = Path(repo_meta.get("local_path", ""))
-            url = repo_meta.get("url", "")
-            default_branch = repo_meta.get("default_branch", "main")
-            if not local_path.is_dir():
-                continue
+                local_path = Path(repo_meta.get("local_path", ""))
+                url = repo_meta.get("url", "")
+                default_branch = repo_meta.get("default_branch", "main")
+                if not local_path.is_dir():
+                    continue
 
-            coordinates = provider.parse_repo_url(url)
-            branch_name = f"clyde/{task_id[:8]}/{repo_name}"
+                coordinates = GitHubGitOps.parse_repo_url(url)
+                branch_name = f"clyde/{task_id[:8]}/{repo_name}"
 
-            await self._git_prepare(repo_path=local_path, branch=branch_name)
-            await provider.push_branch(
-                repo_path=local_path, branch=branch_name, token=token
-            )
-
-            pr_content = await self._generate_pr_content(
-                description=description,
-                repo_name=repo_name,
-                changes=changes,
-                plan_summary=plan.get("summary", ""),
-            )
-
-            existing = await provider.find_open_pr(
-                coordinates=coordinates, token=token, head=branch_name
-            )
-            if existing:
-                pr_urls[coordinates.full_name] = existing.url
-            else:
-                pr_info = await provider.create_pull_request(
-                    coordinates=coordinates,
-                    token=token,
-                    title=pr_content.get("title", f"clyde: {description[:50]}"),
-                    body=pr_content.get("body", "Automated PR by Clyde."),
-                    head=branch_name,
-                    base=default_branch,
+                await self._git_prepare(repo_path=local_path, branch=branch_name)
+                await GitHubGitOps.push_branch(
+                    repo_path=local_path, branch=branch_name, token=token
                 )
-                pr_urls[coordinates.full_name] = pr_info.url
-                self.logger.info("publisher.pr_created", pr=pr_info.url)
+
+                pr_content = await self._generate_pr_content(
+                    description=description,
+                    repo_name=repo_name,
+                    changes=changes,
+                    plan_summary=plan.get("summary", ""),
+                )
+
+                existing = await api.find_open_pr(
+                    coordinates=coordinates, head=branch_name
+                )
+                if existing:
+                    pr_urls[coordinates.full_name] = existing["url"]
+                else:
+                    pr_info = await api.create_pull_request(
+                        coordinates=coordinates,
+                        title=pr_content.get("title", f"clyde: {description[:50]}"),
+                        body=pr_content.get("body", "Automated PR by Clyde."),
+                        head=branch_name,
+                        base=default_branch,
+                    )
+                    pr_urls[coordinates.full_name] = pr_info["url"]
+                    self.logger.info("publisher.pr_created", pr=pr_info["url"])
+        finally:
+            await api.aclose()
 
         event = {
             "name": "publisher.completed",
@@ -167,8 +173,8 @@ class PublisherAgent(BaseAgent):
             plan_summary=plan_summary,
         )
 
-        response = await self.toolbox.anthropic.messages.create(
-            model=self.toolbox.settings.anthropic_model_haiku,
+        response = await self.clients.anthropic.messages.create(
+            model=self.ctx.settings.anthropic_model_haiku,
             max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],

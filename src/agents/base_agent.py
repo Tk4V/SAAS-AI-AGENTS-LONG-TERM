@@ -12,8 +12,9 @@ from typing import Any, ClassVar
 
 import structlog
 
-from src.integrations.oauth.token_resolver import TokenResolver
-from src.integrations.registry import Toolbox, toolbox as default_toolbox
+from src.app_context import AppContext, app_context as default_app_context
+from src.clients import Clients, clients as default_clients
+from src.integrations._shared.token_resolver import TokenResolver
 
 
 class BaseAgent(ABC):
@@ -28,15 +29,17 @@ class BaseAgent(ABC):
            keys the agent contributes to the pipeline state.
 
     The base provides for free:
-        - ``self.toolbox`` — process-wide infrastructure registry (git,
-          anthropic, cipher, settings). Tests pass a ``Toolbox`` instance via
-          the constructor; production uses the global singleton by default.
+        - ``self.ctx`` — `AppContext` (settings, cipher). Tests pass an
+          ``AppContext`` instance via the constructor; production uses the
+          global singleton by default.
+        - ``self.clients`` — `Clients` (anthropic, http). Same DI pattern.
+        - ``self.token_resolver`` — `TokenResolver` for fetching plaintext
+          OAuth tokens out of the database.
         - ``self.logger`` — structlog logger scoped to the agent's ``name``.
         - ``__call__(state)`` — lifecycle wrapper that logs start/finish/fail
-          around every ``execute`` invocation, so the pipeline can simply call
-          ``await agent(state)``.
-        - ``resolve_github_token(user_id)`` — helper for fetching and
-          decrypting the user's stored GitHub OAuth token.
+          around every ``execute`` invocation.
+        - ``resolve_github_token(user_id)`` — convenience for the common
+          "give me the GitHub access token for this user" path.
 
     Agents that need to drive an autonomous Claude Agent SDK loop should
     inherit from ``SDKAgent`` instead, which extends this contract with
@@ -46,15 +49,31 @@ class BaseAgent(ABC):
     name: ClassVar[str]
     role: ClassVar[str]
 
-    def __init__(self, *, toolbox: Toolbox | None = None) -> None:
-        self._toolbox = toolbox or default_toolbox
+    def __init__(
+        self,
+        *,
+        app_context: AppContext | None = None,
+        clients: Clients | None = None,
+    ) -> None:
+        self._ctx = app_context or default_app_context
+        self._clients = clients or default_clients
         self._logger = structlog.get_logger(f"clyde.agent.{self.name}")
-        self._token_resolver = TokenResolver(cipher=self._toolbox.cipher)
+        self._token_resolver = TokenResolver(cipher=self._ctx.cipher)
 
     @property
-    def toolbox(self) -> Toolbox:
-        """Process-wide infrastructure registry (git, anthropic, cipher, settings)."""
-        return self._toolbox
+    def ctx(self) -> AppContext:
+        """Configuration-derived singletons (settings, cipher)."""
+        return self._ctx
+
+    @property
+    def clients(self) -> Clients:
+        """Network clients with connection pools (anthropic, http)."""
+        return self._clients
+
+    @property
+    def token_resolver(self) -> TokenResolver:
+        """DB-backed resolver returning plaintext OAuth tokens."""
+        return self._token_resolver
 
     @property
     def logger(self) -> Any:
@@ -82,4 +101,7 @@ class BaseAgent(ABC):
 
     async def resolve_github_token(self, *, user_id: int) -> str:
         """Fetch and decrypt the user's GitHub OAuth token."""
-        return await self._token_resolver.resolve(user_id=user_id)
+        from src.integrations._shared.kinds import IntegrationKind
+        return await self._token_resolver.resolve(
+            user_id=user_id, kind=IntegrationKind.GITHUB
+        )

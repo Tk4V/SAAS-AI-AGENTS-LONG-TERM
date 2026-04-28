@@ -1,0 +1,98 @@
+"""OAuthProviderConfig — declarative description of one provider.
+
+Each `<name>/config.py` declares a single instance of this dataclass. The
+shape is intentionally flat: 20 fields beats 5 nested objects when a junior
+dev needs to add their first provider.
+
+Three blocks of fields:
+1. Identity        — kind, category, display name.
+2. OAuth endpoints — authorize/token/revoke URLs, or an OIDC discovery URL.
+3. Behavior knobs  — scopes, PKCE, refresh, auth method, settings keys, hooks.
+
+Anything provider-specific that does not fit these knobs (Atlassian cloudId
+resolution, Salesforce `instance_url`) belongs in `<name>/compliance.py` and
+is wired in via `compliance_installer`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
+
+ComplianceInstaller = Callable[[Any], None]
+"""Function that registers Authlib compliance hooks on an `AsyncOAuth2Client`."""
+
+TokenRevoker = Callable[[str], Awaitable[None]]
+"""Provider-specific token revocation. Takes the plaintext access token and
+revokes it at the provider. Use this when the provider does not implement
+RFC 7009 (e.g. GitHub OAuth Apps, which use DELETE with Basic auth instead).
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class OAuthProviderConfig:
+    # Identity
+    kind: IntegrationKind
+    category: IntegrationCategory
+    display_name: str
+
+    # Settings keys (read lazily from `Settings` at client-build time).
+    # Required so the framework can fetch client_id/secret without each
+    # provider importing `Settings` directly.
+    client_id_setting: str
+    client_secret_setting: str
+
+    # OAuth endpoints. Provide either (authorize_url + token_url) for a hand-
+    # configured provider, or `server_metadata_url` for an OIDC provider that
+    # publishes a discovery document.
+    authorize_url: str | None = None
+    token_url: str | None = None
+    server_metadata_url: str | None = None
+    revoke_url: str | None = None
+    userinfo_url: str | None = None
+
+    # Scopes
+    default_scopes: tuple[str, ...] = ()
+    scope_separator: str = " "  # GitHub uses ",", most others use " "
+
+    # PKCE (RFC 7636). Almost always on; only disable for legacy providers.
+    use_pkce: bool = True
+    pkce_method: Literal["S256", "plain"] = "S256"
+
+    # Token endpoint authentication (RFC 6749 §2.3, RFC 8414 §2).
+    token_endpoint_auth_method: Literal[
+        "client_secret_post", "client_secret_basic", "none"
+    ] = "client_secret_post"
+
+    # Refresh tokens. False for providers that issue long-lived tokens
+    # without rotation (e.g. GitHub OAuth App).
+    refresh_supported: bool = True
+
+    # Extra params for the authorization request (e.g. Google's
+    # `access_type=offline`, `prompt=consent`).
+    extra_authorize_params: Mapping[str, str] = field(default_factory=dict)
+
+    # API base URL — used by `<name>/client.py` to build endpoint paths.
+    api_base_url: str | None = None
+
+    # Compliance installer — direct function reference, no string keys.
+    # Lives in `<name>/compliance.py`. Optional: most providers don't need it.
+    compliance_installer: ComplianceInstaller | None = None
+
+    # Custom revoker — for providers that do not implement RFC 7009.
+    # When set, OAuthAdapter.revoke() calls this instead of the standard
+    # revocation endpoint. The function takes the plaintext access token
+    # and is responsible for the entire revocation request.
+    custom_revoker: TokenRevoker | None = None
+
+    def __post_init__(self) -> None:
+        has_endpoints = bool(self.authorize_url and self.token_url)
+        has_discovery = bool(self.server_metadata_url)
+        if not has_endpoints and not has_discovery:
+            raise ValueError(
+                f"Provider {self.kind.value!r} must declare either "
+                "(authorize_url + token_url) or server_metadata_url."
+            )

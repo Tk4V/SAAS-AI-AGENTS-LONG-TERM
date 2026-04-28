@@ -1,7 +1,8 @@
 """Project service: orchestrates project repository calls and cross-cutting rules.
 
-The service stays thin in M1; later steps will add token encryption, GitProvider
-verification of repo URLs, and audit logging here.
+The branch-listing path delegates to ``OAuthService.list_branches`` because
+that is the layer that owns provider dispatch (today only GitHub; tomorrow
+GitLab/Bitbucket too).
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from src.api.schemas.project_schemas import (
 from src.db.models.project import Project, ProjectRepo
 from src.db.queries.project_query import ProjectRepository
 from src.services.oauth_service import OAuthService
-from src.integrations.git.factory import GitProviderFactory
 
 
 class ProjectService:
@@ -26,11 +26,9 @@ class ProjectService:
         self,
         repository: ProjectRepository,
         oauth: OAuthService,
-        git_factory: GitProviderFactory,
     ) -> None:
         self._repo = repository
         self._oauth = oauth
-        self._git = git_factory
 
     async def create(self, *, user_id: int, payload: ProjectCreate) -> Project:
         project = await self._repo.create(
@@ -62,10 +60,9 @@ class ProjectService:
         project = await self._repo.get(user_id=user_id, project_id=project_id)
         result: list[RepoBranches] = []
         for repo in project.repos:
-            token = await self._oauth.get_token(user_id=user_id, provider=repo.provider)
-            provider = self._git.for_url(repo.url)
-            coordinates = provider.parse_repo_url(repo.url)
-            branches = await provider.list_branches(coordinates=coordinates, token=token)
+            branches = await self._oauth.list_branches(
+                user_id=user_id, provider=repo.provider, repo_url=repo.url
+            )
             result.append(RepoBranches(repo_id=repo.id, url=repo.url, branches=branches))
         return ProjectBranchesResponse(repos=result)
 

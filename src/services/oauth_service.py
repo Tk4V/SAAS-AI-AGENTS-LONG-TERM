@@ -1,83 +1,36 @@
 """OAuth flow orchestration for third-party integrations.
 
-The frontend calls `start_flow`, gets an authorization URL with a signed state
-token, and redirects the browser to the provider. The provider sends the user
-back to our callback endpoint, which forwards code and state to
-`handle_callback`. We verify the state, swap the code for an access token,
-encrypt it, and persist it as a `UserOAuthCredential`.
+The frontend calls `start_flow`, gets an authorization URL with a signed
+state token, and redirects the browser to the provider. The provider sends
+the user back to the callback endpoint, which forwards `code` and `state`
+to `handle_callback`. We verify the state, swap the code for tokens via
+`OAuthAdapter`, encrypt them, and persist as `UserOAuthCredential`.
 
-Other services that need to act on behalf of the user (Tech Lead cloning a
-repo, Release Manager creating a PR) ask `OAuthService.get_token` for the
-plaintext token at the moment of use.
+This service is a thin orchestrator. All OAuth protocol details
+(authorize URL building, code-for-token exchange, refresh, revocation
+dispatch) live in `src.integrations._shared.OAuthAdapter`. Provider-specific
+details live in `src/integrations/<name>/`. This file only knows about
+encryption and persistence.
 """
 
 from __future__ import annotations
 
-import secrets
-from datetime import UTC, datetime, timedelta
-from typing import Any
-
-import jwt
 import structlog
 
-from src.utils.crypto import TokenCipher
-from src.utils.exceptions import AuthenticationError, ExternalServiceError
 from src.config import Settings, get_settings
 from src.db.models.project import GitProviderKind
 from src.db.models.user_credential import UserOAuthCredential
 from src.db.queries.user_credential_query import UserOAuthCredentialRepository
-from src.integrations.git.factory import GitProviderFactory
-from src.integrations.git.github import GitHubProvider
-
-
-class OAuthStateSigner:
-    """Signs and verifies the `state` parameter that survives the OAuth round trip.
-
-    The state is a short-lived JWT carrying the user_id and the provider, so
-    the callback can attribute the granted token to the right user without
-    keeping any server-side session.
-    """
-
-    TOKEN_TYPE = "oauth_state"
-
-    def __init__(self, settings: Settings | None = None) -> None:
-        self._settings = settings or get_settings()
-
-    def sign(self, *, user_id: int, provider: str) -> str:
-        now = datetime.now(UTC)
-        payload = {
-            "type": self.TOKEN_TYPE,
-            "user_id": user_id,
-            "provider": provider,
-            "nonce": secrets.token_urlsafe(16),
-            "iat": int(now.timestamp()),
-            "exp": int(
-                (now + timedelta(seconds=self._settings.oauth_state_ttl_sec)).timestamp()
-            ),
-        }
-        return jwt.encode(
-            payload,
-            self._settings.jwt_secret.get_secret_value(),
-            algorithm=self._settings.jwt_algorithm,
-        )
-
-    def verify(self, state: str) -> dict[str, Any]:
-        try:
-            claims = jwt.decode(
-                state,
-                self._settings.jwt_secret.get_secret_value(),
-                algorithms=[self._settings.jwt_algorithm],
-            )
-        except jwt.ExpiredSignatureError as exc:
-            raise AuthenticationError("OAuth state has expired.") from exc
-        except jwt.InvalidTokenError as exc:
-            raise AuthenticationError("OAuth state is invalid.") from exc
-
-        if claims.get("type") != self.TOKEN_TYPE:
-            raise AuthenticationError("Token presented as OAuth state is not one.")
-        if not isinstance(claims.get("user_id"), int):
-            raise AuthenticationError("OAuth state is missing user_id.")
-        return claims
+from src.integrations._shared import (
+    OAuthAdapter,
+    ProviderApiError,
+    ProviderAuthError,
+    ProviderCatalog,
+)
+from src.integrations.github import GitHubApiClient
+from src.integrations.github.git_ops import RepoCoordinates
+from src.utils.crypto import TokenCipher
+from src.utils.exceptions import AuthenticationError
 
 
 class OAuthService:
@@ -85,15 +38,15 @@ class OAuthService:
         self,
         *,
         repository: UserOAuthCredentialRepository,
-        git_factory: GitProviderFactory,
+        adapter: OAuthAdapter,
+        catalog: ProviderCatalog,
         cipher: TokenCipher,
-        state_signer: OAuthStateSigner,
         settings: Settings | None = None,
     ) -> None:
         self._repo = repository
-        self._git = git_factory
+        self._adapter = adapter
+        self._catalog = catalog
         self._cipher = cipher
-        self._state_signer = state_signer
         self._settings = settings or get_settings()
         self._logger = structlog.get_logger("clyde.oauth")
 
@@ -104,14 +57,13 @@ class OAuthService:
         provider: GitProviderKind,
     ) -> str:
         """Build the provider's authorization URL. State is embedded in the URL."""
-        state = self._state_signer.sign(user_id=user_id, provider=provider.value)
-        provider_impl = self._git.for_kind(provider)
-        url = provider_impl.authorization_url(
-            state=state,
+        request = self._adapter.build_authorize_request(
+            kind=provider,
+            user_id=user_id,
             redirect_uri=self._callback_url(provider),
         )
         self._logger.info("oauth.start", user_id=user_id, provider=provider.value)
-        return url
+        return request.url
 
     async def handle_callback(
         self,
@@ -120,27 +72,36 @@ class OAuthService:
         code: str,
         state: str,
     ) -> UserOAuthCredential:
-        claims = self._state_signer.verify(state)
-        if claims.get("provider") != provider.value:
-            raise AuthenticationError("OAuth state does not match the callback provider.")
+        try:
+            result = await self._adapter.handle_callback(
+                kind=provider,
+                code=code,
+                state=state,
+                redirect_uri=self._callback_url(provider),
+            )
+        except ProviderAuthError as exc:
+            raise AuthenticationError(str(exc)) from exc
 
-        user_id: int = claims["user_id"]
-        provider_impl = self._git.for_kind(provider)
-        token = await provider_impl.exchange_code_for_token(
-            code=code,
-            redirect_uri=self._callback_url(provider),
+        bundle = result.token
+        encrypted_access = self._cipher.encrypt(bundle.access_token)
+        encrypted_refresh = (
+            self._cipher.encrypt(bundle.refresh_token)
+            if bundle.refresh_token is not None
+            else None
         )
 
-        encrypted = self._cipher.encrypt(token)
         credential = await self._repo.upsert(
-            user_id=user_id,
+            user_id=result.user_id,
             provider=provider,
-            token_encrypted=encrypted,
-            scopes=self._scopes_for(provider),
+            token_encrypted=encrypted_access,
+            refresh_token_encrypted=encrypted_refresh,
+            expires_at=bundle.expires_at,
+            scopes=",".join(bundle.scopes),
+            raw_metadata=dict(bundle.raw),
         )
         self._logger.info(
             "oauth.callback.success",
-            user_id=user_id,
+            user_id=result.user_id,
             provider=provider.value,
         )
         return credential
@@ -163,10 +124,41 @@ class OAuthService:
         user_id: int,
         provider: GitProviderKind,
     ) -> list[dict]:
-        """Fetch the user's repositories from the connected provider."""
-        token = await self.get_token(user_id=user_id, provider=provider)
-        provider_impl = self._git.for_kind(provider)
-        return await provider_impl.list_repos(token=token)
+        """Fetch the user's repositories from the connected provider.
+
+        Today only GitHub is wired; once another provider's API client lands
+        we will dispatch by `provider` here. Keeping this in the service is a
+        temporary convenience for the frontend integrations page.
+        """
+        if provider is GitProviderKind.GITHUB:
+            from src.integrations._shared.token_resolver import TokenResolver
+            resolver = TokenResolver(cipher=self._cipher)
+            api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
+            try:
+                return await api.list_repos()
+            finally:
+                await api.aclose()
+        raise NotImplementedError(f"list_repos not wired for {provider.value}.")
+
+    async def list_branches(
+        self,
+        *,
+        user_id: int,
+        provider: GitProviderKind,
+        repo_url: str,
+    ) -> list[str]:
+        """Fetch branch names for a repository at the given provider."""
+        if provider is GitProviderKind.GITHUB:
+            from src.integrations._shared.token_resolver import TokenResolver
+            from src.integrations.github.git_ops import GitHubGitOps
+            resolver = TokenResolver(cipher=self._cipher)
+            coordinates = GitHubGitOps.parse_repo_url(repo_url)
+            api = GitHubApiClient(user_id=user_id, token_resolver=resolver)
+            try:
+                return await api.list_branches(coordinates=coordinates)
+            finally:
+                await api.aclose()
+        raise NotImplementedError(f"list_branches not wired for {provider.value}.")
 
     async def revoke(
         self,
@@ -176,10 +168,9 @@ class OAuthService:
     ) -> None:
         credential = await self._repo.get(user_id=user_id, provider=provider)
         token = self._cipher.decrypt(credential.token_encrypted)
-        provider_impl = self._git.for_kind(provider)
         try:
-            await provider_impl.revoke_token(token=token)
-        except ExternalServiceError as exc:
+            await self._adapter.revoke(kind=provider, access_token=token)
+        except ProviderApiError as exc:
             self._logger.warning(
                 "oauth.revoke.remote_failed",
                 user_id=user_id,
@@ -198,7 +189,11 @@ class OAuthService:
         )
 
     def build_callback_redirect_url(
-        self, *, provider: GitProviderKind, success: bool, error_code: str | None = None
+        self,
+        *,
+        provider: GitProviderKind,
+        success: bool,
+        error_code: str | None = None,
     ) -> str:
         """Build the URL to redirect the browser to after OAuth callback."""
         base = self._settings.frontend_redirect_url.rstrip("?&")
@@ -209,10 +204,3 @@ class OAuthService:
             f"{base}{separator}integration={provider.value}"
             f"&status=error&code={error_code or 'unknown'}"
         )
-
-    @staticmethod
-    def _scopes_for(provider: GitProviderKind) -> str:
-        """Return the OAuth scopes to request for the given provider."""
-        if provider is GitProviderKind.GITHUB:
-            return GitHubProvider.DEFAULT_SCOPES
-        return ""

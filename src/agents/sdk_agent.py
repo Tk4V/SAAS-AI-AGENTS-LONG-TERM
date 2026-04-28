@@ -48,8 +48,12 @@ class SDKAgent(BaseAgent):
     # No default — concrete subclass MUST set this. __init_subclass__ enforces.
     SDK_ALLOWED_TOOLS: ClassVar[list[str]]
 
-    SDK_MODEL: ClassVar[str] = "claude-sonnet-4-7"
-    SDK_MAX_TURNS: ClassVar[int] = 50
+    # Parent runs on Opus — its job is to plan, read selectively, and delegate
+    # heavy lifting to sub-agents. Sub-agents (defined in `build_subagents`)
+    # handle the actual implementation on Sonnet/Haiku, so Opus turns stay
+    # focused on orchestration and don't get burned on `Read`/`Grep` chains.
+    SDK_MODEL: ClassVar[str] = "claude-opus-4-7"
+    SDK_MAX_TURNS: ClassVar[int] = 200
     SDK_PERMISSION_MODE: ClassVar[str] = "acceptEdits"
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -173,25 +177,41 @@ class SDKAgent(BaseAgent):
         result_text = ""
         turn_count = 0
 
-        async for message in query(
-            prompt=prompt,
-            options=ClaudeAgentOptions(**options_kwargs),
-        ):
-            if isinstance(message, AssistantMessage):
-                turn_count += 1
-                self._log_assistant_message(message, turn_count)
+        try:
+            async for message in query(
+                prompt=prompt,
+                options=ClaudeAgentOptions(**options_kwargs),
+            ):
+                if isinstance(message, AssistantMessage):
+                    turn_count += 1
+                    self._log_assistant_message(message, turn_count)
 
-            elif isinstance(message, UserMessage):
-                self._log_tool_results(message, turn_count)
+                elif isinstance(message, UserMessage):
+                    self._log_tool_results(message, turn_count)
 
-            elif isinstance(message, ResultMessage):
-                result_text = getattr(message, "result", "") or ""
-                self._logger.info(
-                    "sdk_finished",
-                    total_turns=turn_count,
-                    cost_usd=getattr(message, "total_cost_usd", 0),
-                    result_length=len(result_text),
-                )
+                elif isinstance(message, ResultMessage):
+                    result_text = getattr(message, "result", "") or ""
+                    self._logger.info(
+                        "sdk_finished",
+                        total_turns=turn_count,
+                        cost_usd=getattr(message, "total_cost_usd", 0),
+                        result_length=len(result_text),
+                    )
+        except Exception as exc:
+            # The CLI sometimes exits with a non-zero code *after* emitting a
+            # ResultMessage (e.g. when it bumps into max_turns or an internal
+            # limit). The work Claude already did is committed to the working
+            # directory — we want the caller to keep that. Only re-raise when
+            # nothing useful was produced, so genuine startup failures are
+            # not silently swallowed.
+            if turn_count == 0:
+                raise
+            self._logger.warning(
+                "sdk_session_aborted_with_partial_progress",
+                turn_count=turn_count,
+                partial_result_length=len(result_text),
+                error=str(exc),
+            )
 
         return result_text
 

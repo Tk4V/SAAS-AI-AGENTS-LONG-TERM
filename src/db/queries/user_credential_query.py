@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.utils.exceptions import NotFoundError
 from src.db.models.project import GitProviderKind
 from src.db.models.user_credential import UserOAuthCredential
+from src.utils.exceptions import NotFoundError
 
 
 class UserOAuthCredentialRepository:
@@ -21,11 +24,26 @@ class UserOAuthCredentialRepository:
         provider: GitProviderKind,
         token_encrypted: str,
         scopes: str,
+        refresh_token_encrypted: str | None = None,
+        expires_at: datetime | None = None,
+        provider_account_id: str | None = None,
+        account_label: str | None = None,
+        raw_metadata: dict[str, Any] | None = None,
     ) -> UserOAuthCredential:
-        """Insert or replace the credential for the given (user, provider)."""
+        """Insert or replace the credential for the given (user, provider).
+
+        New OAuth fields default to None / empty so that the GitHub OAuth App
+        flow (which has no refresh token, no expiry, no account discovery)
+        keeps working unchanged.
+        """
         existing = await self._find(user_id=user_id, provider=provider)
         if existing is not None:
             existing.token_encrypted = token_encrypted
+            existing.refresh_token_encrypted = refresh_token_encrypted
+            existing.expires_at = expires_at
+            existing.provider_account_id = provider_account_id
+            existing.account_label = account_label
+            existing.raw_metadata = raw_metadata or {}
             existing.scopes = scopes
             await self._session.flush()
             return existing
@@ -34,6 +52,11 @@ class UserOAuthCredentialRepository:
             user_id=user_id,
             provider=provider,
             token_encrypted=token_encrypted,
+            refresh_token_encrypted=refresh_token_encrypted,
+            expires_at=expires_at,
+            provider_account_id=provider_account_id,
+            account_label=account_label,
+            raw_metadata=raw_metadata or {},
             scopes=scopes,
         )
         self._session.add(credential)

@@ -17,10 +17,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from src.agents.sdk_agent import SDKAgent
-from src.utils.exceptions import PipelineError
-from src.db.models.project import GitProviderKind
+from claude_agent_sdk import AgentDefinition
+
 from src.agent_tools.mcp import github_mcp_server
+from src.agents.sdk_agent import SDKAgent
+from src.integrations.github import GitHubGitOps
+from src.utils.exceptions import PipelineError
 
 
 class DeveloperAgent(SDKAgent):
@@ -117,6 +119,105 @@ class DeveloperAgent(SDKAgent):
             )
         return {"github": github_mcp_server(github_token)}
 
+    async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Specialised sub-agents the Opus parent delegates to.
+
+        Hierarchy:
+        - Parent (Opus 4.7): plans, decomposes, delegates. Few turns, all
+          orchestration.
+        - `code-implementer` (Sonnet 4.6): the workhorse — actually edits
+          and writes files. Receives a precise instruction from the parent
+          and produces the change. This is where most LLM tokens are spent.
+        - `code-explorer` (Haiku 4.5): cheap, parallelisable exploration.
+          Map the repo, find files matching X, summarise a module.
+        - `test-runner` (Haiku 4.5): validate after edits.
+
+        Why three tiers: Opus reasoning is expensive — let it think hard
+        and short. Sonnet handles careful editing. Haiku does the wide
+        cheap stuff. The SDK runs Agent calls in parallel when the parent
+        spawns several at once, so this also wins wall-clock on
+        independent tasks.
+        """
+        return {
+            "code-implementer": AgentDefinition(
+                description=(
+                    "Implementation worker on Sonnet. Hand it a precise, "
+                    "scoped task — 'add endpoint X to file Y', 'refactor "
+                    "function Z to support W', 'create file P with content "
+                    "Q' — and it executes the file edits and returns a "
+                    "summary of what changed. Use this for ALL non-trivial "
+                    "editing work. Do not micromanage; give it the goal "
+                    "and trust it. Spawn several in parallel when changes "
+                    "are independent (different files, no shared state)."
+                ),
+                prompt=(
+                    "You are a senior implementation engineer. The parent "
+                    "agent has already planned the work and hands you a "
+                    "scoped task. Execute it: read the files you need, "
+                    "make the edits with Edit/Write, verify your changes "
+                    "compile/parse where applicable, and return a concise "
+                    "summary of what you changed (file paths + one-line "
+                    "description per change). Do not re-plan, do not ask "
+                    "clarifying questions back — make the best judgement "
+                    "call from the parent's instruction. If something is "
+                    "genuinely impossible, return a short explanation."
+                ),
+                tools=[
+                    "Read",
+                    "Edit",
+                    "Write",
+                    "Glob",
+                    "Grep",
+                    "Bash(git diff*)",
+                    "Bash(python -m py_compile*)",
+                    "mcp__github__*",
+                ],
+                model="sonnet",
+            ),
+            "code-explorer": AgentDefinition(
+                description=(
+                    "Read-only repository explorer on Haiku. Use to map "
+                    "the codebase, find files matching a pattern, "
+                    "summarise a module, or answer 'where is X "
+                    "implemented?' — discovery, not editing. Returns a "
+                    "concise summary, never raw file contents. Spawn "
+                    "multiple in parallel for independent searches."
+                ),
+                prompt=(
+                    "You are a fast, focused code explorer. Read, glob, "
+                    "and grep across the repository to answer the parent "
+                    "agent's question. Always return a concise structured "
+                    "summary (file paths + 1-2 sentence context per item), "
+                    "never paste large file contents back. If the parent "
+                    "asks multiple questions, answer each in a labelled "
+                    "section."
+                ),
+                tools=["Read", "Glob", "Grep"],
+                model="haiku",
+            ),
+            "test-runner": AgentDefinition(
+                description=(
+                    "Run the project's tests, linter, or type checker and "
+                    "report failures. Use after edits to validate without "
+                    "burning parent turns on long Bash output."
+                ),
+                prompt=(
+                    "You are a test/lint runner. Execute the requested "
+                    "command (pytest, ruff, mypy) and return a compact "
+                    "report: pass/fail summary plus the first 5 failures "
+                    "with file:line and one-line cause. Do not paste full "
+                    "tracebacks."
+                ),
+                tools=[
+                    "Bash(pytest*)",
+                    "Bash(ruff*)",
+                    "Bash(mypy*)",
+                    "Bash(python -m py_compile*)",
+                ],
+                model="haiku",
+            ),
+        }
+
     async def _clone_all_repositories(
         self,
         *,
@@ -125,16 +226,15 @@ class DeveloperAgent(SDKAgent):
         workspace_path: Path,
     ) -> list[dict[str, Any]]:
         """Clone all task repositories concurrently into the workspace directory."""
-        git_provider = self.toolbox.git.for_kind(GitProviderKind.GITHUB)
 
         async def clone_one(repository: dict[str, Any]) -> dict[str, Any]:
             url = repository.get("url")
             if not url:
                 raise PipelineError("Repository entry is missing the 'url' field.")
 
-            coordinates = git_provider.parse_repo_url(url)
+            coordinates = GitHubGitOps.parse_repo_url(url)
             branch = repository.get("default_branch") or "main"
-            cloned = await git_provider.clone(
+            cloned = await GitHubGitOps.clone(
                 coordinates=coordinates,
                 token=github_token,
                 branch=branch,
