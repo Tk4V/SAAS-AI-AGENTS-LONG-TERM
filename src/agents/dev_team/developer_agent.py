@@ -90,6 +90,7 @@ class DeveloperAgent(SDKAgent):
                     "github_token": github_token,
                     "jira_token": jira_context[0] if jira_context else None,
                     "jira_site_url": jira_context[1] if jira_context else None,
+                    "jira_cloud_id": jira_context[2] if jira_context else None,
                 },
             )
 
@@ -135,8 +136,9 @@ class DeveloperAgent(SDKAgent):
 
         jira_token = context.get("jira_token")
         jira_site_url = context.get("jira_site_url")
-        if jira_token and jira_site_url:
-            servers["jira"] = jira_mcp_server(jira_token, jira_site_url)
+        jira_cloud_id = context.get("jira_cloud_id")
+        if jira_token and jira_site_url and jira_cloud_id:
+            servers["jira"] = jira_mcp_server(jira_token, jira_site_url, jira_cloud_id)
 
         return servers
 

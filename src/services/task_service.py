@@ -16,6 +16,7 @@ from src.config.constants import WS_EVENT_PIPELINE_FAILED, WS_EVENT_TASK_STATUS_
 from src.db.session import db
 from src.utils.broadcaster import broadcaster
 from src.agents.dev_team.developer_agent import DeveloperAgent
+from src.agents.dev_team.jira_agent import JiraAgent
 from src.agents.dev_team.publisher_agent import PublisherAgent
 
 
@@ -94,7 +95,14 @@ class TaskService:
 
         try:
             state = dict(initial_state)
-            for agent_class in (DeveloperAgent, PublisherAgent):
+            has_repos = bool(state.get("repos"))
+
+            if has_repos:
+                pipeline = [DeveloperAgent, PublisherAgent]
+            else:
+                pipeline = [JiraAgent]
+
+            for agent_class in pipeline:
                 agent = agent_class()
                 result = await agent(state)
                 state = {**state, **result}

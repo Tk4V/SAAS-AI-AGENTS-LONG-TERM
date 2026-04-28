@@ -30,7 +30,7 @@ JIRA = OAuthProviderConfig(
     # from our DB and the access token expires naturally within ~1 hour.
     revoke_url=None,
     userinfo_url="https://api.atlassian.com/me",
-    default_scopes=("read:jira-user", "read:jira-work", "offline_access"),
+    default_scopes=("read:jira-user", "read:jira-work", "write:jira-work", "offline_access"),
     scope_separator=" ",
     use_pkce=True,
     token_endpoint_auth_method="client_secret_post",
