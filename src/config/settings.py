@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     jira_oauth_client_id: SecretStr = SecretStr("")
     jira_oauth_client_secret: SecretStr = SecretStr("")
 
+    google_oauth_client_id: SecretStr = SecretStr("")
+    google_oauth_client_secret: SecretStr = SecretStr("")
+
+    slack_oauth_client_id: SecretStr = SecretStr("")
+    slack_oauth_client_secret: SecretStr = SecretStr("")
+
     oauth_state_ttl_sec: int = 600
     oauth_callback_base_url: str = "http://localhost:8000"
     frontend_redirect_url: str = "http://localhost:3000/integrations"

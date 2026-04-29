@@ -7,6 +7,10 @@ from src.api.schemas.common_schemas import (
     Page,
     PaginationParams,
 )
+from src.api.schemas.credential_schemas import (
+    BearerCredentialCreate,
+    CredentialRead,
+)
 from src.api.schemas.project_schemas import (
     ProjectCreate,
     ProjectListItem,
@@ -26,6 +30,8 @@ __all__ = [
     "IntegrationRead",
     "IntegrationsList",
     "OAuthStartResponse",
+    "BearerCredentialCreate",
+    "CredentialRead",
     "Page",
     "PaginationParams",
     "ProjectCreate",

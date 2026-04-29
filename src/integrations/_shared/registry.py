@@ -14,13 +14,16 @@ from src.integrations._shared.config import OAuthProviderConfig
 from src.integrations._shared.exceptions import ProviderConfigError
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
 from src.integrations.github.config import GITHUB
+from src.integrations.google.config import GOOGLE
 from src.integrations.jira.config import JIRA
+from src.integrations.slack.config import SLACK
 
 _PROVIDERS: tuple[OAuthProviderConfig, ...] = (
     GITHUB,
     JIRA,
+    GOOGLE,
+    SLACK,
     # Add new providers here. One line per provider.
-    # SLACK,
     # DISCORD,
     # SENTRY,
 )

@@ -18,7 +18,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.errors import ExceptionHandlerRegistry
 from src.api.middleware import RequestContextMiddleware
-from src.api.views import auth_view, health_view, projects_view, tasks_view, webhooks_view
+from src.api.views import (
+    auth_view,
+    credentials_oauth_view,
+    credentials_view,
+    health_view,
+    projects_view,
+    providers_view,
+    tasks_view,
+    webhooks_view,
+)
 from src.api.websocket import task_stream_view
 from src.config import Settings, get_settings
 from src.db.session import db
@@ -82,6 +91,9 @@ class Application:
         app.include_router(projects_view.router, prefix=prefix)
         app.include_router(tasks_view.router, prefix=prefix)
         app.include_router(task_stream_view.router, prefix=prefix)
+        app.include_router(credentials_view.router, prefix=prefix)
+        app.include_router(credentials_oauth_view.router, prefix=prefix)
+        app.include_router(providers_view.router, prefix=prefix)
         app.include_router(webhooks_view.router, prefix=prefix)
 
     @asynccontextmanager
