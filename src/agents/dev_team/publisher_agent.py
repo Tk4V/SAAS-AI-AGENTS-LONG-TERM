@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 
 from src.agents.prompts.dev_team.publisher_prompts import (
     PR_CONTENT_TEMPLATE,
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPT as _PUB_SYSTEM_PROMPT,
 )
 from src.agents.sdk_agent import SDKAgent
 from src.integrations.github import GitHubGitOps, RepoCoordinates
@@ -38,6 +38,7 @@ class PublisherAgent(SDKAgent):
 
     name: ClassVar[str] = "publisher"
     role: ClassVar[str] = "Publisher"
+    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _PUB_SYSTEM_PROMPT
 
     SDK_ALLOWED_TOOLS: ClassVar[list[str]] = ["mcp__github__*"]
     SDK_MODEL: ClassVar[str] = "claude-haiku-4-5"
@@ -227,7 +228,7 @@ class PublisherAgent(SDKAgent):
         response = await self.clients.anthropic.messages.create(
             model=self.ctx.settings.anthropic_model_haiku,
             max_tokens=2048,
-            system=SYSTEM_PROMPT,
+            system=_PUB_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text
