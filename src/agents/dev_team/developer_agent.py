@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 
 from claude_agent_sdk import AgentDefinition
 
+from src.agents.prompts.dev_team.developer_prompts import SYSTEM_PROMPT as _DEV_SYSTEM_PROMPT
 from src.agents.sdk_agent import SDKAgent
 from src.integrations.github import GitHubGitOps
 from src.utils.exceptions import PipelineError
@@ -33,6 +34,7 @@ class DeveloperAgent(SDKAgent):
 
     name: ClassVar[str] = "developer"
     role: ClassVar[str] = "Developer"
+    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _DEV_SYSTEM_PROMPT
 
     SDK_ALLOWED_TOOLS: ClassVar[list[str]] = [
         "Read",

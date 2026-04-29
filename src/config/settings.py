@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     github_oauth_client_secret: SecretStr = SecretStr("")
     github_webhook_secret: SecretStr = SecretStr("")
     github_api_base: str = "https://api.github.com"
+    github_mcp_url: str = "https://api.githubcopilot.com/mcp/"
 
     jira_oauth_client_id: SecretStr = SecretStr("")
     jira_oauth_client_secret: SecretStr = SecretStr("")

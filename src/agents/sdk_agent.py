@@ -55,6 +55,7 @@ class SDKAgent(BaseAgent):
     SDK_MODEL: ClassVar[str] = "claude-opus-4-7"
     SDK_MAX_TURNS: ClassVar[int] = 200
     SDK_PERMISSION_MODE: ClassVar[str] = "acceptEdits"
+    SDK_SYSTEM_PROMPT: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -171,6 +172,8 @@ class SDKAgent(BaseAgent):
             "model": self.SDK_MODEL,
             "mcp_servers": mcp_servers,
         }
+        if self.SDK_SYSTEM_PROMPT is not None:
+            options_kwargs["system_prompt"] = self.SDK_SYSTEM_PROMPT
         if subagents:
             options_kwargs["agents"] = subagents
 
