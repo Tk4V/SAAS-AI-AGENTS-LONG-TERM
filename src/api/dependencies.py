@@ -15,6 +15,20 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app_context import app_context
+from src.credentials.audit import CredentialAuditor
+from src.credentials.catalog import (
+    PublicProviderCatalog,
+    get_public_provider_catalog,
+)
+from src.credentials.kinds import KindRegistry, get_kind_registry
+from src.credentials.kinds.registry import OAuthKindHandler
+from src.credentials.oauth.refresher import OAuthRefresher
+from src.credentials.oauth.service import OAuthCredentialService
+from src.credentials.resolver import CredentialResolver
+from src.credentials.service import CredentialService
+from src.db.models.credential import CredentialKind
+from src.db.queries.credential_event_query import CredentialEventRepository
+from src.db.queries.credential_query import CredentialRepository
 from src.db.queries.project_query import ProjectRepository
 from src.db.queries.task_query import TaskRepository
 from src.db.queries.user_credential_query import UserOAuthCredentialRepository
@@ -179,3 +193,130 @@ def get_project_service(
 
 
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
+
+
+def get_credential_repository(session: SessionDep) -> CredentialRepository:
+    return CredentialRepository(session)
+
+
+CredentialRepositoryDep = Annotated[
+    CredentialRepository, Depends(get_credential_repository)
+]
+
+
+def get_credential_event_repository(session: SessionDep) -> CredentialEventRepository:
+    return CredentialEventRepository(session)
+
+
+CredentialEventRepositoryDep = Annotated[
+    CredentialEventRepository, Depends(get_credential_event_repository)
+]
+
+
+def get_credential_auditor(
+    events: CredentialEventRepositoryDep,
+) -> CredentialAuditor:
+    return CredentialAuditor(events=events)
+
+
+CredentialAuditorDep = Annotated[CredentialAuditor, Depends(get_credential_auditor)]
+
+
+def get_kind_registry_dep() -> KindRegistry:
+    return get_kind_registry()
+
+
+KindRegistryDep = Annotated[KindRegistry, Depends(get_kind_registry_dep)]
+
+
+def get_credential_service(
+    repo: CredentialRepositoryDep,
+    cipher: TokenCipherDep,
+    kinds: KindRegistryDep,
+    auditor: CredentialAuditorDep,
+) -> CredentialService:
+    return CredentialService(
+        repository=repo,
+        cipher=cipher,
+        kinds=kinds,
+        auditor=auditor,
+    )
+
+
+CredentialServiceDep = Annotated[CredentialService, Depends(get_credential_service)]
+
+
+def get_oauth_kind_handler(kinds: KindRegistryDep) -> OAuthKindHandler:
+    handler = kinds.get(CredentialKind.OAUTH)
+    return handler  # type: ignore[no-any-return]
+
+
+OAuthKindHandlerDep = Annotated[OAuthKindHandler, Depends(get_oauth_kind_handler)]
+
+
+def get_oauth_refresher(
+    repo: CredentialRepositoryDep,
+    adapter: OAuthAdapterDep,
+    cipher: TokenCipherDep,
+    handler: OAuthKindHandlerDep,
+) -> OAuthRefresher:
+    return OAuthRefresher(
+        repository=repo,
+        adapter=adapter,
+        cipher=cipher,
+        handler=handler,
+    )
+
+
+OAuthRefresherDep = Annotated[OAuthRefresher, Depends(get_oauth_refresher)]
+
+
+def get_credential_resolver(
+    repo: CredentialRepositoryDep,
+    cipher: TokenCipherDep,
+    kinds: KindRegistryDep,
+    auditor: CredentialAuditorDep,
+    refresher: OAuthRefresherDep,
+) -> CredentialResolver:
+    return CredentialResolver(
+        repository=repo,
+        cipher=cipher,
+        kinds=kinds,
+        auditor=auditor,
+        oauth_refresher=refresher,
+    )
+
+
+CredentialResolverDep = Annotated[CredentialResolver, Depends(get_credential_resolver)]
+
+
+def get_oauth_credential_service(
+    repo: CredentialRepositoryDep,
+    adapter: OAuthAdapterDep,
+    catalog: ProviderCatalogDep,
+    cipher: TokenCipherDep,
+    auditor: CredentialAuditorDep,
+    handler: OAuthKindHandlerDep,
+) -> OAuthCredentialService:
+    return OAuthCredentialService(
+        repository=repo,
+        adapter=adapter,
+        catalog=catalog,
+        cipher=cipher,
+        auditor=auditor,
+        handler=handler,
+    )
+
+
+OAuthCredentialServiceDep = Annotated[
+    OAuthCredentialService, Depends(get_oauth_credential_service)
+]
+
+
+def get_public_provider_catalog_dep() -> PublicProviderCatalog:
+    return get_public_provider_catalog()
+
+
+PublicProviderCatalogDep = Annotated[
+    PublicProviderCatalog, Depends(get_public_provider_catalog_dep)
+]
