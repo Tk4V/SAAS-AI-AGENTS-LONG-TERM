@@ -1,36 +1,53 @@
-"""Publisher agent — commits changes, pushes branches, creates PRs.
+"""Publisher agent — commits changes, pushes branches, creates PRs via GitHub MCP.
 
 Takes the diffs from the Developer agent and publishes them to GitHub.
+Local git operations (config, branch, add, commit, push) run as subprocesses.
+All GitHub API interactions (PR lookup and creation) go through the GitHub MCP
+tool (mcp__github__create_pull_request / mcp__github__list_pull_requests).
 Uses Haiku for PR content generation (cheap and fast).
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from src.agents.base_agent import BaseAgent
 from src.agents.prompts.dev_team.publisher_prompts import (
     PR_CONTENT_TEMPLATE,
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPT as _PUB_SYSTEM_PROMPT,
 )
-from src.integrations.github import GitHubApiClient, GitHubGitOps
+from src.agents.sdk_agent import SDKAgent
+from src.integrations.github import GitHubGitOps, RepoCoordinates
 from src.utils.exceptions import PipelineError
 
+_PR_URL_RE = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
 
-class PublisherAgent(BaseAgent):
-    """Commits local changes, pushes feature branches, and opens pull requests.
+
+class PublisherAgent(SDKAgent):
+    """Commits local changes, pushes feature branches, and opens pull requests via GitHub MCP.
 
     For each repository that contains diffs the agent configures git identity,
-    creates (or checks out) a feature branch, pushes it, and then opens a PR
-    via the GitHub REST API client.
+    creates (or checks out) a feature branch, pushes it, generates PR content
+    with Haiku, then delegates PR lookup and creation entirely to the GitHub
+    MCP tool — no direct REST API calls.
     """
 
     name: ClassVar[str] = "publisher"
     role: ClassVar[str] = "Publisher"
+    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _PUB_SYSTEM_PROMPT
+
+    SDK_ALLOWED_TOOLS: ClassVar[list[str]] = ["mcp__github__*"]
+    SDK_MODEL: ClassVar[str] = "claude-haiku-4-5"
+    SDK_MAX_TURNS: ClassVar[int] = 50
+    SDK_PERMISSION_MODE: ClassVar[str] = "acceptEdits"
+
+    async def build_mcp_servers(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Mount GitHub MCP server for the user."""
+        return await self.build_user_mcp_servers(user_id=context["user_id"])
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
         """Publish diffs as PRs and return the resulting PR URLs."""
@@ -48,59 +65,60 @@ class PublisherAgent(BaseAgent):
             return {"pr_urls": {}, "events": []}
 
         token = await self.resolve_github_token(user_id=user_id)
-        api = GitHubApiClient(
-            user_id=user_id,
-            token_resolver=self.token_resolver,
-            http_client=self.clients.http,
-        )
-
         repo_map = {r.get("name", ""): r for r in repos}
         pr_urls: dict[str, str] = {}
 
-        try:
-            for repo_name, changes in diffs.items():
-                repo_meta = repo_map.get(repo_name)
-                if not repo_meta:
-                    continue
+        for repo_name, changes in diffs.items():
+            repo_meta = repo_map.get(repo_name)
+            if not repo_meta:
+                continue
 
-                local_path = Path(repo_meta.get("local_path", ""))
-                url = repo_meta.get("url", "")
-                default_branch = repo_meta.get("default_branch", "main")
-                if not local_path.is_dir():
-                    continue
+            local_path = Path(repo_meta.get("local_path", ""))
+            url = repo_meta.get("url", "")
+            default_branch = repo_meta.get("default_branch", "main")
+            if not local_path.is_dir():
+                continue
 
-                coordinates = GitHubGitOps.parse_repo_url(url)
-                branch_name = f"clyde/{task_id[:8]}/{repo_name}"
+            coordinates = GitHubGitOps.parse_repo_url(url)
+            branch_name = f"clyde/{task_id[:8]}/{repo_name}"
 
-                await self._git_prepare(repo_path=local_path, branch=branch_name)
-                await GitHubGitOps.push_branch(
-                    repo_path=local_path, branch=branch_name, token=token
+            # Local git ops: config, branch, stage, commit — must stay as subprocesses
+            await self._git_prepare(repo_path=local_path, branch=branch_name)
+            await GitHubGitOps.push_branch(
+                repo_path=local_path, branch=branch_name, token=token
+            )
+
+            # Generate PR content with Haiku LLM
+            pr_content = await self._generate_pr_content(
+                description=description,
+                repo_name=repo_name,
+                changes=changes,
+                plan_summary=plan.get("summary", ""),
+            )
+
+            # Lookup existing PR or create new one — all via GitHub MCP
+            pr_prompt = self._build_pr_prompt(
+                coordinates=coordinates,
+                pr_content=pr_content,
+                branch_name=branch_name,
+                default_branch=default_branch,
+            )
+            result = await self.run_sdk_session(
+                prompt=pr_prompt,
+                working_directory=local_path,
+                mcp_context={"user_id": user_id},
+            )
+
+            pr_url = self._extract_pr_url(result)
+            if pr_url:
+                pr_urls[coordinates.full_name] = pr_url
+                self.logger.info("publisher.pr_created", pr=pr_url)
+            else:
+                self.logger.warning(
+                    "publisher.pr_url_not_found",
+                    repo=repo_name,
+                    result_preview=result[:200],
                 )
-
-                pr_content = await self._generate_pr_content(
-                    description=description,
-                    repo_name=repo_name,
-                    changes=changes,
-                    plan_summary=plan.get("summary", ""),
-                )
-
-                existing = await api.find_open_pr(
-                    coordinates=coordinates, head=branch_name
-                )
-                if existing:
-                    pr_urls[coordinates.full_name] = existing["url"]
-                else:
-                    pr_info = await api.create_pull_request(
-                        coordinates=coordinates,
-                        title=pr_content.get("title", f"clyde: {description[:50]}"),
-                        body=pr_content.get("body", "Automated PR by Clyde."),
-                        head=branch_name,
-                        base=default_branch,
-                    )
-                    pr_urls[coordinates.full_name] = pr_info["url"]
-                    self.logger.info("publisher.pr_created", pr=pr_info["url"])
-        finally:
-            await api.aclose()
 
         event = {
             "name": "publisher.completed",
@@ -108,8 +126,42 @@ class PublisherAgent(BaseAgent):
             "occurred_at": datetime.now(UTC).isoformat(),
             "payload": {"pr_count": len(pr_urls)},
         }
-
         return {"pr_urls": pr_urls, "events": [event]}
+
+    @staticmethod
+    def _build_pr_prompt(
+        *,
+        coordinates: RepoCoordinates,
+        pr_content: dict[str, Any],
+        branch_name: str,
+        default_branch: str,
+    ) -> str:
+        """Build the SDK session prompt for PR lookup/creation via MCP."""
+        title = pr_content.get("title", "Automated changes by Clyde")
+        body = pr_content.get("body", "")
+        owner, repo = coordinates.owner, coordinates.name
+        return (
+            f"Repository: {owner}/{repo}\n"
+            f"Head branch: {branch_name}\n"
+            f"Base branch: {default_branch}\n\n"
+            f"First check if an open pull request already exists for head branch "
+            f"'{branch_name}' using the mcp__github__list_pull_requests tool. "
+            f"If one exists, return its URL.\n\n"
+            f"If no PR exists, create one using mcp__github__create_pull_request with:\n"
+            f"- owner: {owner}\n"
+            f"- repo: {repo}\n"
+            f"- head: {branch_name}\n"
+            f"- base: {default_branch}\n"
+            f"- title: {title}\n"
+            f"- body: {body}\n\n"
+            "Output the PR URL as the last line of your response."
+        )
+
+    @staticmethod
+    def _extract_pr_url(result: str) -> str | None:
+        """Extract the first GitHub PR URL from the SDK session result text."""
+        match = _PR_URL_RE.search(result)
+        return match.group(0) if match else None
 
     @staticmethod
     async def _git_prepare(*, repo_path: Path, branch: str) -> None:
@@ -176,7 +228,7 @@ class PublisherAgent(BaseAgent):
         response = await self.clients.anthropic.messages.create(
             model=self.ctx.settings.anthropic_model_haiku,
             max_tokens=2048,
-            system=SYSTEM_PROMPT,
+            system=_PUB_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text
