@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from src.api.dependencies import PublicProviderCatalogDep
 from src.api.schemas.provider_schemas import ProviderRead, ProvidersList
+from src.credentials.catalog.models import AuthMethodKind
 from src.utils.exceptions import NotFoundError
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -16,10 +19,21 @@ class ProvidersView:
 
     @staticmethod
     @router.get("", response_model=ProvidersList)
-    async def list(catalog: PublicProviderCatalogDep) -> ProvidersList:
+    async def list(
+        catalog: PublicProviderCatalogDep,
+        auth_method: Annotated[
+            AuthMethodKind | None,
+            Query(description="Filter providers by supported auth method (oauth or bearer)."),
+        ] = None,
+    ) -> ProvidersList:
         """Return every known provider, ordered for default UI rendering."""
+        entries = catalog.all()
+        if auth_method is not None:
+            entries = tuple(
+                e for e in entries if any(m.kind is auth_method for m in e.auth_methods)
+            )
         return ProvidersList(
-            items=[ProviderRead.from_entry(entry) for entry in catalog.all()]
+            items=[ProviderRead.from_entry(entry) for entry in entries]
         )
 
     @staticmethod
