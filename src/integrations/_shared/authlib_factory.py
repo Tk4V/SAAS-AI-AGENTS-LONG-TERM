@@ -31,7 +31,7 @@ class AuthlibClientFactory:
     def __init__(
         self,
         *,
-        catalog_lookup: "ProviderLookup",
+        catalog_lookup: ProviderLookup,
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or get_settings()

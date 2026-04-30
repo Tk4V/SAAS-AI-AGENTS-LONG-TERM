@@ -1,8 +1,7 @@
 """Project service: orchestrates project repository calls and cross-cutting rules.
 
-The branch-listing path delegates to ``OAuthService.list_branches`` because
-that is the layer that owns provider dispatch (today only GitHub; tomorrow
-GitLab/Bitbucket too).
+Branch listing dispatches by repo provider to the matching API client. Today
+only GitHub is wired; GitLab/Bitbucket land here when their API clients do.
 """
 
 from __future__ import annotations
@@ -16,19 +15,21 @@ from src.api.schemas.project_schemas import (
     ProjectUpdate,
     RepoBranches,
 )
-from src.db.models.project import Project, ProjectRepo
+from src.credentials.oauth.token_provider import OAuthTokenProvider
+from src.db.models.project import Project, ProjectRepo, ProviderKind
 from src.db.queries.project_query import ProjectRepository
-from src.services.oauth_service import OAuthService
+from src.integrations.github import GitHubApiClient
+from src.integrations.github.git_ops import GitHubGitOps
 
 
 class ProjectService:
     def __init__(
         self,
         repository: ProjectRepository,
-        oauth: OAuthService,
+        oauth_token_provider: OAuthTokenProvider,
     ) -> None:
         self._repo = repository
-        self._oauth = oauth
+        self._token_provider = oauth_token_provider
 
     async def create(self, *, user_id: int, payload: ProjectCreate) -> Project:
         project = await self._repo.create(
@@ -60,11 +61,32 @@ class ProjectService:
         project = await self._repo.get(user_id=user_id, project_id=project_id)
         result: list[RepoBranches] = []
         for repo in project.repos:
-            branches = await self._oauth.list_branches(
-                user_id=user_id, provider=repo.provider, repo_url=repo.url
+            branches = await self._list_branches_for_repo(
+                user_id=user_id, repo=repo
             )
-            result.append(RepoBranches(repo_id=repo.id, url=repo.url, branches=branches))
+            result.append(
+                RepoBranches(repo_id=repo.id, url=repo.url, branches=branches)
+            )
         return ProjectBranchesResponse(repos=result)
+
+    async def _list_branches_for_repo(
+        self,
+        *,
+        user_id: int,
+        repo: ProjectRepo,
+    ) -> list[str]:
+        if repo.provider is not ProviderKind.GITHUB:
+            raise NotImplementedError(
+                f"list_branches not wired for {repo.provider.value}."
+            )
+        coordinates = GitHubGitOps.parse_repo_url(repo.url)
+        client = GitHubApiClient(
+            user_id=user_id, token_provider=self._token_provider
+        )
+        try:
+            return await client.list_branches(coordinates=coordinates)
+        finally:
+            await client.aclose()
 
     async def list(
         self,

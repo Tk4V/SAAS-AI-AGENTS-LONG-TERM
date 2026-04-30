@@ -8,7 +8,6 @@ from src.db.models.credential import Credential, CredentialKind
 from src.db.models.credential_event import CredentialEvent, CredentialEventType
 from src.db.models.project import ProviderKind, Project, ProjectRepo
 from src.db.models.task import Task, TaskStatus
-from src.db.models.user_credential import UserOAuthCredential
 
 __all__ = [
     "Credential",
@@ -20,5 +19,4 @@ __all__ = [
     "ProjectRepo",
     "Task",
     "TaskStatus",
-    "UserOAuthCredential",
 ]

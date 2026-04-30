@@ -1,9 +1,9 @@
-"""HTTP views for the credentials-domain OAuth flow.
+"""HTTP views for the OAuth authorize / callback flow.
 
-Mounted under ``/credentials/oauth/{provider}`` so the URL space stays
-distinct from the legacy ``/auth/oauth/{provider}`` endpoints powered by
-``services.oauth_service``. Both endpoints can run side by side until step
-3 retires the legacy stack.
+Mounted under ``/credentials/oauth/{provider}`` — the only path that needs
+its own URL shape because OAuth requires a redirect dance, not a CRUD
+write. Read, update and revoke happen through the generic ``/credentials``
+endpoints; only the dance lives here.
 """
 
 from __future__ import annotations

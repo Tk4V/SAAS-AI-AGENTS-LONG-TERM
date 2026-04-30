@@ -24,6 +24,7 @@ from src.credentials.kinds import KindRegistry, get_kind_registry
 from src.credentials.kinds.registry import OAuthKindHandler
 from src.credentials.oauth.refresher import OAuthRefresher
 from src.credentials.oauth.service import OAuthCredentialService
+from src.credentials.oauth.token_provider import OAuthTokenProvider
 from src.credentials.resolver import CredentialResolver
 from src.credentials.service import CredentialService
 from src.db.models.credential import CredentialKind
@@ -31,7 +32,6 @@ from src.db.queries.credential_event_query import CredentialEventRepository
 from src.db.queries.credential_query import CredentialRepository
 from src.db.queries.project_query import ProjectRepository
 from src.db.queries.task_query import TaskRepository
-from src.db.queries.user_credential_query import UserOAuthCredentialRepository
 from src.db.session import db
 from src.integrations._shared import (
     AuthlibClientFactory,
@@ -40,7 +40,6 @@ from src.integrations._shared import (
     ProviderCatalog,
 )
 from src.services.auth_service import AuthService, CurrentUser
-from src.services.oauth_service import OAuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.utils.crypto import TokenCipher
@@ -132,16 +131,6 @@ def get_token_cipher() -> TokenCipher:
 TokenCipherDep = Annotated[TokenCipher, Depends(get_token_cipher)]
 
 
-def get_user_credential_repository(session: SessionDep) -> UserOAuthCredentialRepository:
-    return UserOAuthCredentialRepository(session)
-
-
-UserOAuthCredentialRepositoryDep = Annotated[
-    UserOAuthCredentialRepository,
-    Depends(get_user_credential_repository),
-]
-
-
 # OAuth framework — built once per request from process-wide singletons.
 # `ProviderCatalog` is stateless; `AuthlibClientFactory` caches httpx pools
 # per provider; `OAuthStateSigner` is cheap to construct. Reusing process-
@@ -168,28 +157,23 @@ def get_oauth_adapter(catalog: ProviderCatalogDep) -> OAuthAdapter:
 OAuthAdapterDep = Annotated[OAuthAdapter, Depends(get_oauth_adapter)]
 
 
-def get_oauth_service(
-    repository: UserOAuthCredentialRepositoryDep,
+def get_oauth_token_provider(
     adapter: OAuthAdapterDep,
-    catalog: ProviderCatalogDep,
     cipher: TokenCipherDep,
-) -> OAuthService:
-    return OAuthService(
-        repository=repository,
-        adapter=adapter,
-        catalog=catalog,
-        cipher=cipher,
-    )
+) -> OAuthTokenProvider:
+    return OAuthTokenProvider(adapter=adapter, cipher=cipher)
 
 
-OAuthServiceDep = Annotated[OAuthService, Depends(get_oauth_service)]
+OAuthTokenProviderDep = Annotated[
+    OAuthTokenProvider, Depends(get_oauth_token_provider)
+]
 
 
 def get_project_service(
     repo: ProjectRepositoryDep,
-    oauth: OAuthServiceDep,
+    token_provider: OAuthTokenProviderDep,
 ) -> ProjectService:
-    return ProjectService(repository=repo, oauth=oauth)
+    return ProjectService(repository=repo, oauth_token_provider=token_provider)
 
 
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]

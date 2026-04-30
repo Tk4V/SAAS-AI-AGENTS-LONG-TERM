@@ -2,8 +2,9 @@
 
 Jira tokens expire (typically 3600 s) and rotate on every refresh:
 each refresh call issues a new refresh token that replaces the old one.
-`TokenResolver.resolve()` handles the expiry check and refresh cycle;
-this module only patches the Authlib client for Atlassian-specific quirks.
+`OAuthTokenProvider.get_access_token()` handles the expiry check and refresh
+cycle; this module only patches the Authlib client for Atlassian-specific
+quirks.
 
 The hooks registered here are intentional no-op normalizers for now —
 Atlassian returns standard JSON that Authlib parses correctly. They exist

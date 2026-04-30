@@ -12,9 +12,27 @@ from typing import Any, ClassVar
 
 import structlog
 
-from src.app_context import AppContext, app_context as default_app_context
-from src.clients import Clients, clients as default_clients
-from src.integrations._shared.token_resolver import TokenResolver
+from src.app_context import AppContext
+from src.app_context import app_context as default_app_context
+from src.clients import Clients
+from src.clients import clients as default_clients
+from src.credentials.audit import CredentialAuditor
+from src.credentials.kinds.registry import get_kind_registry
+from src.credentials.oauth.refresher import OAuthRefresher
+from src.credentials.oauth.token_provider import OAuthTokenProvider
+from src.credentials.payloads.oauth import OAuthMetadata
+from src.credentials.resolver import CredentialResolver
+from src.db.models.credential import CredentialKind
+from src.db.models.project import ProviderKind
+from src.db.queries.credential_event_query import CredentialEventRepository
+from src.db.queries.credential_query import CredentialRepository
+from src.db.session import db
+from src.integrations._shared import (
+    AuthlibClientFactory,
+    OAuthAdapter,
+    OAuthStateSigner,
+    ProviderCatalog,
+)
 
 
 class BaseAgent(ABC):
@@ -29,12 +47,10 @@ class BaseAgent(ABC):
            keys the agent contributes to the pipeline state.
 
     The base provides for free:
-        - ``self.ctx`` — `AppContext` (settings, cipher). Tests pass an
-          ``AppContext`` instance via the constructor; production uses the
-          global singleton by default.
-        - ``self.clients`` — `Clients` (anthropic, http). Same DI pattern.
-        - ``self.token_resolver`` — `TokenResolver` for fetching plaintext
-          OAuth tokens out of the database.
+        - ``self.ctx`` — `AppContext` (settings, cipher).
+        - ``self.clients`` — `Clients` (anthropic, http).
+        - ``self.token_provider`` — `OAuthTokenProvider` returning plaintext
+          OAuth access tokens out of the unified credentials table.
         - ``self.logger`` — structlog logger scoped to the agent's ``name``.
         - ``__call__(state)`` — lifecycle wrapper that logs start/finish/fail
           around every ``execute`` invocation.
@@ -42,8 +58,7 @@ class BaseAgent(ABC):
           "give me the GitHub access token for this user" path.
 
     Agents that need to drive an autonomous Claude Agent SDK loop should
-    inherit from ``SDKAgent`` instead, which extends this contract with
-    ``SDK_ALLOWED_TOOLS`` + ``build_mcp_servers`` + ``run_sdk_session``.
+    inherit from ``SDKAgent`` instead.
     """
 
     name: ClassVar[str]
@@ -58,7 +73,22 @@ class BaseAgent(ABC):
         self._ctx = app_context or default_app_context
         self._clients = clients or default_clients
         self._logger = structlog.get_logger(f"clyde.agent.{self.name}")
-        self._token_resolver = TokenResolver(cipher=self._ctx.cipher)
+        self._oauth_adapter = self._build_oauth_adapter()
+        self._token_provider = OAuthTokenProvider(
+            adapter=self._oauth_adapter,
+            cipher=self._ctx.cipher,
+        )
+
+    @staticmethod
+    def _build_oauth_adapter() -> OAuthAdapter:
+        catalog = ProviderCatalog()
+        factory = AuthlibClientFactory(catalog_lookup=catalog.get)
+        signer = OAuthStateSigner()
+        return OAuthAdapter(
+            catalog_lookup=catalog.get,
+            client_factory=factory,
+            state_signer=signer,
+        )
 
     @property
     def ctx(self) -> AppContext:
@@ -71,9 +101,9 @@ class BaseAgent(ABC):
         return self._clients
 
     @property
-    def token_resolver(self) -> TokenResolver:
-        """DB-backed resolver returning plaintext OAuth tokens."""
-        return self._token_resolver
+    def token_provider(self) -> OAuthTokenProvider:
+        """OAuth token provider backed by the unified credentials store."""
+        return self._token_provider
 
     @property
     def logger(self) -> Any:
@@ -100,47 +130,71 @@ class BaseAgent(ABC):
         """Do the work and return only the keys the agent contributes to the state."""
 
     async def resolve_github_token(self, *, user_id: int) -> str:
-        """Fetch and decrypt the user's GitHub OAuth token."""
-        from src.integrations._shared.kinds import IntegrationKind
-        return await self._token_resolver.resolve(
-            user_id=user_id, kind=IntegrationKind.GITHUB
+        """Fetch the user's GitHub OAuth access token."""
+        return await self._token_provider.get_access_token(
+            user_id=user_id, provider=ProviderKind.GITHUB
         )
 
     async def build_user_mcp_servers(self, *, user_id: int) -> dict[str, Any]:
-        """Mount MCP servers for every integration the user has connected.
+        """Mount MCP servers for every OAuth integration the user has connected.
 
-        Iterates the provider catalog, skips providers without an
-        ``mcp_factory``, skips providers the user has not connected, and
-        silently skips (with a warning log) any factory that raises — so a
-        misconfigured credential never blocks the other servers from mounting.
+        Reads the user's active OAuth credentials from the unified
+        ``credentials`` table, runs each one through ``CredentialResolver`` so
+        expiring tokens are refreshed, and asks the matching provider config
+        for an MCP factory. Providers without an ``mcp_factory`` are skipped;
+        factories that raise are logged but never block the others.
 
-        Returns a dict ready for ``ClaudeAgentOptions.mcp_servers``, keyed by
-        ``IntegrationKind.value`` (e.g. ``"github"``, ``"jira"``).
+        Returns a dict ready for ``ClaudeAgentOptions.mcp_servers`` keyed by
+        ``ProviderKind.value`` (e.g. ``"github"``, ``"jira"``).
         """
-        from src.db.queries.user_credential_query import UserOAuthCredentialRepository
-        from src.db.session import db
-        from src.integrations._shared.registry import ProviderCatalog
-
         catalog = ProviderCatalog()
-        async with db.session_scope() as session:
-            creds = await UserOAuthCredentialRepository(session).list_for_user(user_id=user_id)
-
+        kinds = get_kind_registry()
         cipher = self._ctx.cipher
-        cred_by_kind = {c.provider: c for c in creds}
-        servers: dict[str, Any] = {}
 
-        for cfg in catalog.all():
-            if cfg.mcp_factory is None:
-                continue
-            cred = cred_by_kind.get(cfg.kind)
-            if cred is None:
-                continue
-            try:
-                token = cipher.decrypt(cred.token_encrypted)
-                servers[cfg.kind.value] = cfg.mcp_factory(token, dict(cred.raw_metadata or {}))
-            except Exception as exc:
-                self._logger.warning(
-                    "mcp.factory_failed", provider=cfg.kind.value, error=str(exc)
-                )
+        async with db.session_scope() as session:
+            repo = CredentialRepository(session)
+            events = CredentialEventRepository(session)
+            auditor = CredentialAuditor(events=events)
+            refresher = OAuthRefresher(
+                repository=repo,
+                adapter=self._oauth_adapter,
+                cipher=cipher,
+                handler=kinds.get(CredentialKind.OAUTH),
+            )
+            resolver = CredentialResolver(
+                repository=repo,
+                cipher=cipher,
+                kinds=kinds,
+                auditor=auditor,
+                oauth_refresher=refresher,
+            )
+            credentials = await repo.list_active_oauth_for_user(user_id=user_id)
+
+            servers: dict[str, Any] = {}
+            for credential in credentials:
+                metadata = OAuthMetadata(**credential.metadata_json)
+                try:
+                    provider = ProviderKind(metadata.provider)
+                except ValueError:
+                    continue
+                cfg = catalog.get(provider) if provider in catalog else None
+                if cfg is None or cfg.mcp_factory is None:
+                    continue
+                try:
+                    resolved = await resolver.resolve(
+                        user_id=user_id,
+                        credential_id=credential.id,
+                        purpose="mcp_factory",
+                    )
+                    servers[provider.value] = cfg.mcp_factory(
+                        resolved.payload.access_token,
+                        dict(metadata.raw),
+                    )
+                except Exception as exc:
+                    self._logger.warning(
+                        "mcp.factory_failed",
+                        provider=provider.value,
+                        error=str(exc),
+                    )
 
         return servers

@@ -68,9 +68,10 @@ class CredentialService:
         user_id: int,
         offset: int,
         limit: int,
+        kind: CredentialKind | None = None,
     ) -> tuple[list[Credential], int]:
         return await self._repo.list_for_user(
-            user_id=user_id, offset=offset, limit=limit
+            user_id=user_id, offset=offset, limit=limit, kind=kind
         )
 
     async def get(

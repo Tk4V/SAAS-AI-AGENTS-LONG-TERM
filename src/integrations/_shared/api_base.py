@@ -2,8 +2,8 @@
 
 Owns three concerns so subclasses do not duplicate them:
 
-1. Token resolution — fetches the access token via `TokenResolver` on every
-   request. Resolution is per-request because the token may be refreshed
+1. Token resolution — fetches the access token via `OAuthTokenProvider` on
+   every request. Resolution is per-request because the token may be refreshed
    between calls; we never cache the plaintext on the instance.
 
 2. Bearer auth — adds `Authorization: Bearer <token>` automatically. If a
@@ -22,13 +22,15 @@ catalog grows past one entry. Premature centralization wastes review time.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from src.integrations._shared.exceptions import ProviderApiError, ProviderRateLimitError
 from src.integrations._shared.kinds import IntegrationKind
-from src.integrations._shared.token_resolver import TokenResolver
+
+if TYPE_CHECKING:
+    from src.credentials.oauth.token_provider import OAuthTokenProvider
 
 
 class BaseApiClient:
@@ -37,13 +39,13 @@ class BaseApiClient:
         *,
         kind: IntegrationKind,
         user_id: int,
-        token_resolver: TokenResolver,
+        token_provider: OAuthTokenProvider,
         base_url: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._kind = kind
         self._user_id = user_id
-        self._resolver = token_resolver
+        self._token_provider = token_provider
         self._base_url = base_url.rstrip("/") if base_url else None
         self._http = http_client or httpx.AsyncClient(timeout=30.0)
         self._owns_http = http_client is None
@@ -58,7 +60,9 @@ class BaseApiClient:
         path_or_url: str,
         **kwargs: Any,
     ) -> httpx.Response:
-        token = await self._resolver.resolve(user_id=self._user_id, kind=self._kind)
+        token = await self._token_provider.get_access_token(
+            user_id=self._user_id, provider=self._kind
+        )
         headers = dict(kwargs.pop("headers", {}) or {})
         headers.update(self._auth_headers(token))
 

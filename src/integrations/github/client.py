@@ -13,15 +13,17 @@ small subset of fields and we do not want to model the full GitHub schema.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from src.config import Settings, get_settings
 from src.integrations._shared.api_base import BaseApiClient
 from src.integrations._shared.kinds import IntegrationKind
-from src.integrations._shared.token_resolver import TokenResolver
 from src.integrations.github.git_ops import RepoCoordinates
+
+if TYPE_CHECKING:
+    from src.credentials.oauth.token_provider import OAuthTokenProvider
 
 
 class GitHubApiClient(BaseApiClient):
@@ -31,7 +33,7 @@ class GitHubApiClient(BaseApiClient):
         self,
         *,
         user_id: int,
-        token_resolver: TokenResolver,
+        token_provider: OAuthTokenProvider,
         http_client: httpx.AsyncClient | None = None,
         settings: Settings | None = None,
     ) -> None:
@@ -39,7 +41,7 @@ class GitHubApiClient(BaseApiClient):
         super().__init__(
             kind=IntegrationKind.GITHUB,
             user_id=user_id,
-            token_resolver=token_resolver,
+            token_provider=token_provider,
             base_url=self._settings.github_api_base,
             http_client=http_client,
         )
