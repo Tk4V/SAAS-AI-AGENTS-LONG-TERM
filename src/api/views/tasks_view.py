@@ -70,6 +70,16 @@ class TaskView:
         return TaskRead.from_orm(task)
 
     @staticmethod
+    @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete(
+        task_id: UUID,
+        user: CurrentUserDep,
+        service: TaskServiceDep,
+    ) -> None:
+        """Delete a task by ID."""
+        await service.delete(user_id=user.id, task_id=task_id)
+
+    @staticmethod
     @router.post("/{task_id}/retry", response_model=TaskRead)
     async def retry(
         task_id: UUID,

@@ -46,6 +46,11 @@ class TaskService:
         """List tasks with optional filters."""
         return await self._repo.list(user_id=user_id, offset=offset, limit=limit, project_id=project_id, status=status)
 
+    async def delete(self, *, user_id: int, task_id: UUID) -> None:
+        """Delete a task by ID."""
+        await self._repo.delete(user_id=user_id, task_id=task_id)
+        self._logger.info("task.deleted", task_id=str(task_id))
+
     async def retry(self, *, user_id: int, task_id: UUID) -> Task:
         """Restart a failed task from scratch."""
         from src.utils.exceptions import ConflictError
