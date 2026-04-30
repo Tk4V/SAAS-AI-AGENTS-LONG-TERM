@@ -80,6 +80,11 @@ class TaskRepository:
         total = await self._session.scalar(count_base)
         return items, int(total or 0)
 
+    async def delete(self, *, user_id: int, task_id: UUID) -> None:
+        task = await self.get(user_id=user_id, task_id=task_id)
+        await self._session.delete(task)
+        await self._session.flush()
+
     async def update_status(
         self,
         *,
