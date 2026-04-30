@@ -4,10 +4,6 @@ State is the only thing that survives the round-trip between our backend,
 the provider, and the user's browser. Embedding `user_id`, `provider`, and
 the optional PKCE verifier in a JWT means the callback route is stateless:
 no Starlette session, no Redis, no `state→user` table.
-
-This module is a port of `services.oauth_service.OAuthStateSigner` with one
-addition: an optional `pkce_verifier` claim so PKCE works without sessions.
-The original signer remains until services/oauth_service.py migrates.
 """
 
 from __future__ import annotations

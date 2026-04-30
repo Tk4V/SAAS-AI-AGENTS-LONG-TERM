@@ -19,7 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.errors import ExceptionHandlerRegistry
 from src.api.middleware import RequestContextMiddleware
 from src.api.views import (
-    auth_view,
     credentials_oauth_view,
     credentials_view,
     health_view,
@@ -87,7 +86,6 @@ class Application:
     def _register_routers(self, app: FastAPI) -> None:
         prefix = self._settings.api_prefix
         app.include_router(health_view.router, prefix=prefix)
-        app.include_router(auth_view.router, prefix=prefix)
         app.include_router(projects_view.router, prefix=prefix)
         app.include_router(tasks_view.router, prefix=prefix)
         app.include_router(task_stream_view.router, prefix=prefix)

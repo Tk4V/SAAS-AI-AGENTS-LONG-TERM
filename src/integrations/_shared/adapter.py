@@ -9,8 +9,8 @@ What lives here:
   `userinfo_url`.
 
 What does *not* live here:
-- Persisting tokens to the DB — that's `OAuthService` (the orchestrator).
-- Decrypting tokens for use — that's `TokenResolver`.
+- Persisting tokens to the DB — that's `OAuthCredentialService` (the orchestrator).
+- Decrypting tokens for use — that's `OAuthTokenProvider`.
 - Calling provider business APIs — that's `<name>/client.py`.
 
 The adapter is intentionally provider-agnostic. Every quirk should be
@@ -65,7 +65,7 @@ class OAuthAdapter:
     def __init__(
         self,
         *,
-        catalog_lookup: "ConfigLookup",
+        catalog_lookup: ConfigLookup,
         client_factory: AuthlibClientFactory,
         state_signer: OAuthStateSigner,
     ) -> None:

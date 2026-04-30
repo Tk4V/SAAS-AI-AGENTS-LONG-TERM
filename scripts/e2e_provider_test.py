@@ -138,16 +138,20 @@ class OAuthFlow:
         provider: str,
     ) -> None:
         """Skip OAuth if already connected; otherwise open the browser."""
-        response = await http.get(f"{base_url}/auth/integrations", headers=headers)
+        response = await http.get(
+            f"{base_url}/credentials", params={"kind": "oauth"}, headers=headers
+        )
         if response.status_code == 200:
             items = response.json().get("items", [])
-            if any(item.get("provider") == provider for item in items):
+            if any(
+                item.get("metadata", {}).get("provider") == provider for item in items
+            ):
                 Logger.info(f"{provider.title()} already connected, skipping OAuth")
                 return
 
         Logger.info(f"Starting {provider.title()} OAuth flow...")
         response = await http.get(
-            f"{base_url}/auth/oauth/{provider}/start", headers=headers
+            f"{base_url}/credentials/oauth/{provider}/authorize", headers=headers
         )
         if response.status_code != 200:
             Logger.info(f"OAuth start failed: {response.status_code} {response.text}")
@@ -173,10 +177,15 @@ class OAuthFlow:
         provider: str,
     ) -> bool:
         for _ in range(60):
-            response = await http.get(f"{base_url}/auth/integrations", headers=headers)
+            response = await http.get(
+                f"{base_url}/credentials", params={"kind": "oauth"}, headers=headers
+            )
             if response.status_code == 200:
                 items = response.json().get("items", [])
-                if any(item.get("provider") == provider for item in items):
+                if any(
+                    item.get("metadata", {}).get("provider") == provider
+                    for item in items
+                ):
                     return True
             await asyncio.sleep(1)
         return False
@@ -188,50 +197,21 @@ class OAuthFlow:
 
 
 class RepoSelector:
+    """Manual repository entry. The list-repos API was retired; the UI/script
+    now takes the repo URL directly from the user and validates it on attach."""
+
     @staticmethod
     async def pick(
         http: httpx.AsyncClient, base_url: str, headers: dict[str, str]
     ) -> dict:
-        Logger.info("Fetching your GitHub repositories...")
-        response = await http.get(
-            f"{base_url}/auth/integrations/github/repos", headers=headers, timeout=30.0
-        )
-        if response.status_code != 200:
-            Logger.info(f"Failed to fetch repos: {response.status_code} {response.text}")
+        url = input("  Paste a GitHub repo URL (e.g. https://github.com/owner/name): ").strip()
+        if not url:
+            Logger.info("No repo URL provided.")
             sys.exit(1)
-
-        repos = response.json()["items"]
-        if not repos:
-            Logger.info("No repositories found on your GitHub account.")
-            sys.exit(1)
-
-        print(f"\n  Found {len(repos)} repositories. Pick one:\n")
-        for index, repo in enumerate(repos, 1):
-            private_label = " (private)" if repo["private"] else ""
-            description = (
-                f" — {repo['description'][:60]}" if repo.get("description") else ""
-            )
-            print(f"  {index:3d}. {repo['full_name']}{private_label}{description}")
-
-        print()
-        while True:
-            choice = input(f"  Enter number (1-{len(repos)}): ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(repos):
-                selected = repos[int(choice) - 1]
-                break
-            print("  Invalid choice, try again.")
-
-        default_branch = selected["default_branch"]
-        branch_input = input(f"  Branch [{default_branch}]: ").strip()
-        if branch_input:
-            clean = branch_input.encode("ascii", errors="ignore").decode("ascii").strip()
-            if clean:
-                selected["default_branch"] = clean
-
-        Logger.info(
-            f"Selected: {selected['full_name']} (branch: {selected['default_branch']})"
-        )
-        return selected
+        full_name = url.rstrip("/").removeprefix("https://github.com/")
+        branch = input("  Branch [main]: ").strip() or "main"
+        Logger.info(f"Selected: {full_name} (branch: {branch})")
+        return {"full_name": full_name, "url": url, "default_branch": branch}
 
 
 # ---------------------------------------------------------------------------

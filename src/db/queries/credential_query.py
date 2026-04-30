@@ -61,21 +61,22 @@ class CredentialRepository:
         user_id: int,
         offset: int,
         limit: int,
+        kind: CredentialKind | None = None,
     ) -> tuple[list[Credential], int]:
-        base = select(Credential).where(
+        filters = [
             Credential.user_id == user_id,
             Credential.deleted_at.is_(None),
-        )
+        ]
+        if kind is not None:
+            filters.append(Credential.kind == kind)
+        base = select(Credential).where(*filters)
         rows = (
             await self._session.execute(
                 base.order_by(Credential.created_at.desc()).offset(offset).limit(limit)
             )
         ).scalars().all()
         total = await self._session.scalar(
-            select(func.count(Credential.id)).where(
-                Credential.user_id == user_id,
-                Credential.deleted_at.is_(None),
-            )
+            select(func.count(Credential.id)).where(*filters)
         )
         return list(rows), int(total or 0)
 
@@ -89,6 +90,50 @@ class CredentialRepository:
         credential.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return credential
+
+    async def find_active_oauth_for_provider(
+        self,
+        *,
+        user_id: int,
+        provider: str,
+    ) -> Credential | None:
+        """Return the most recent active OAuth credential bound to ``provider``.
+
+        Filters by ``kind=oauth`` and matches the provider value stored in the
+        non-secret ``metadata_json`` column. Soft-deleted rows are excluded.
+        """
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        stmt = (
+            select(Credential)
+            .where(
+                Credential.user_id == user_id,
+                Credential.kind == CredentialKind.OAUTH,
+                Credential.deleted_at.is_(None),
+                cast(Credential.metadata_json, JSONB)["provider"].astext == provider,
+            )
+            .order_by(Credential.created_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def list_active_oauth_for_user(
+        self,
+        *,
+        user_id: int,
+    ) -> list[Credential]:
+        """Return all active OAuth credentials for the user."""
+        stmt = (
+            select(Credential)
+            .where(
+                Credential.user_id == user_id,
+                Credential.kind == CredentialKind.OAUTH,
+                Credential.deleted_at.is_(None),
+            )
+            .order_by(Credential.created_at.desc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
 
     async def _find(
         self,

@@ -109,9 +109,9 @@ _PROVIDERS = (
 )
 ```
 
-Done. The user can now visit `/auth/oauth/slack/start` and connect their
-Slack workspace. The token is stored encrypted in
-`user_oauth_credentials`, the same table GitHub uses.
+Done. The user can now visit `/credentials/oauth/slack/authorize` and connect
+their Slack workspace. The token is stored encrypted in the unified
+`credentials` table as `CredentialKind.OAUTH`, the same table GitHub uses.
 
 ### 6. (Optional, lazy) Add an API client
 
@@ -161,8 +161,10 @@ back to RFC 7009 via `revoke_url`, and is a no-op otherwise.
 | `authlib_factory.py` | `AuthlibClientFactory` — builds and caches one `AsyncOAuth2Client` per provider. |
 | `adapter.py` | `OAuthAdapter` — runs the OAuth dance (authorize → exchange → refresh → revoke) for any provider. |
 | `api_base.py` | `BaseApiClient` — parent class for `<provider>/client.py` files. |
-| `token_resolver.py` | `TokenResolver` — fetches a credential from the DB and returns a plaintext access token. |
 | `registry.py` | `ProviderCatalog` — explicit list of every registered provider. |
+
+Token decryption and refresh live in `src/credentials/oauth/token_provider.py`
+(`OAuthTokenProvider`), outside the integration layer.
 
 ## Files inside `github/`
 
@@ -176,13 +178,13 @@ back to RFC 7009 via `revoke_url`, and is a no-op otherwise.
 
 ## What does *not* belong here
 
-- **Routes**: live in `src/api/views/`. They call `OAuthService` (in
-  `src/services/`), which calls `OAuthAdapter`.
-- **Persistence**: `UserOAuthCredential` model lives in `src/db/models/`,
-  the repository in `src/db/queries/`. The integration layer only sees
-  domain objects, not SQLAlchemy.
+- **Routes**: live in `src/api/views/`. They call `OAuthCredentialService`
+  (in `src/credentials/oauth/`), which calls `OAuthAdapter`.
+- **Persistence**: the `Credential` model lives in `src/db/models/`, the
+  repository (`CredentialQuery`) in `src/db/queries/`. The integration layer
+  only sees domain objects, not SQLAlchemy.
 - **Encryption keys**: `Settings.fernet_key` plus `src/utils/crypto.py`.
-  The integration layer never touches the cipher directly; `TokenResolver`
+  The integration layer never touches the cipher directly; `OAuthTokenProvider`
   is the single point of decryption.
 
 ## Testing a new provider locally
@@ -191,9 +193,9 @@ back to RFC 7009 via `revoke_url`, and is a no-op otherwise.
 2. Set `<provider>_oauth_client_id` and `<provider>_oauth_client_secret`
    in `.env`.
 3. Set the redirect URI in the provider's portal to
-   `http://localhost:8000/api/v1/auth/oauth/<kind>/callback`.
+   `http://localhost:8000/api/v1/credentials/oauth/<kind>/callback`.
 4. Run the dev server (`make run-dev`).
-5. Visit `/api/v1/auth/oauth/<kind>/start` while authenticated to start the
-   flow. The provider will redirect back to your callback, the token will
-   be encrypted and persisted, and you should see the credential in
-   `user_oauth_credentials`.
+5. Visit `/api/v1/credentials/oauth/<kind>/authorize` while authenticated to
+   start the flow. The provider will redirect back to your callback, the
+   token will be encrypted and persisted, and you should see the credential
+   in the `credentials` table with `kind = 'oauth'`.

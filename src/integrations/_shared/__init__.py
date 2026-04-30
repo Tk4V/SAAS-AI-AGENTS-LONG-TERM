@@ -30,7 +30,6 @@ from src.integrations._shared.exceptions import (
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
 from src.integrations._shared.registry import ProviderCatalog
 from src.integrations._shared.state import OAuthStateSigner
-from src.integrations._shared.token_resolver import TokenResolver
 from src.integrations._shared.tokens import TokenBundle
 
 __all__ = [
@@ -39,13 +38,13 @@ __all__ = [
     "BaseApiClient",
     "CallbackResult",
     "ComplianceInstaller",
-    "MCPFactory",
-    "PostCallbackHook",
     "IntegrationCategory",
     "IntegrationKind",
+    "MCPFactory",
     "OAuthAdapter",
     "OAuthProviderConfig",
     "OAuthStateSigner",
+    "PostCallbackHook",
     "ProviderApiError",
     "ProviderAuthError",
     "ProviderCatalog",
@@ -54,6 +53,5 @@ __all__ = [
     "ProviderRateLimitError",
     "ProviderRefreshError",
     "TokenBundle",
-    "TokenResolver",
     "TokenRevoker",
 ]

@@ -100,3 +100,24 @@ class CredentialResolver:
         return await self._repo.get(
             user_id=user_id, credential_id=credential_id
         )
+
+    async def resolve_oauth_for_provider(
+        self,
+        *,
+        user_id: int,
+        provider: str,
+        purpose: str | None = None,
+    ) -> ResolvedCredential | None:
+        """Find the active OAuth credential for ``(user_id, provider)`` and
+        return it decrypted, refreshing the access token if it is close to
+        expiry. Returns ``None`` when the user has no active OAuth credential
+        for the requested provider.
+        """
+        credential = await self._repo.find_active_oauth_for_provider(
+            user_id=user_id, provider=provider
+        )
+        if credential is None:
+            return None
+        return await self.resolve(
+            user_id=user_id, credential_id=credential.id, purpose=purpose
+        )

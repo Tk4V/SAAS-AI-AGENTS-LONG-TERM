@@ -1,8 +1,4 @@
-from src.api.schemas.auth_schemas import (
-    IntegrationRead,
-    IntegrationsList,
-    OAuthStartResponse,
-)
+from src.api.schemas.auth_schemas import OAuthStartResponse
 from src.api.schemas.common_schemas import (
     Page,
     PaginationParams,
@@ -27,8 +23,6 @@ from src.api.schemas.webhook_schemas import (
 )
 
 __all__ = [
-    "IntegrationRead",
-    "IntegrationsList",
     "OAuthStartResponse",
     "BearerCredentialCreate",
     "CredentialRead",
