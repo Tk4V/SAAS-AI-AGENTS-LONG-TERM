@@ -52,5 +52,6 @@ def jira_mcp_server(token: str, raw_metadata: dict[str, Any]) -> dict[str, objec
             "JIRA_URL": site_url,
             "ATLASSIAN_OAUTH_CLOUD_ID": cloud_id,
             "ATLASSIAN_OAUTH_ACCESS_TOKEN": token,
+            "READ_ONLY_MODE": "false",
         },
     }
