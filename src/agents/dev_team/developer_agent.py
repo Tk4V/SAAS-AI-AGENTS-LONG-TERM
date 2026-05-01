@@ -177,7 +177,7 @@ class DeveloperAgent(SDKAgent):
                     "mcp__slack__*",
                 ],
                 model="sonnet",
-                mcpServers=["github", "jira"],
+                mcpServers=["github", "jira", "slack"],
             ),
             "code-explorer": AgentDefinition(
                 description=(
