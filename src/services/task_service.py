@@ -15,8 +15,8 @@ from src.db.queries.task_query import TaskRepository
 from src.config.constants import WS_EVENT_PIPELINE_FAILED, WS_EVENT_TASK_STATUS_CHANGED
 from src.db.session import db
 from src.utils.broadcaster import broadcaster
-from src.agents.dev_team.developer_agent import DeveloperAgent
-from src.agents.dev_team.publisher_agent import PublisherAgent
+from src.agents.team.orchestrator_agent import OrchestratorAgent
+from src.agents.team.publisher_agent import PublisherAgent
 
 
 class TaskService:
@@ -99,7 +99,7 @@ class TaskService:
 
         try:
             state = dict(initial_state)
-            pipeline = [DeveloperAgent, PublisherAgent]
+            pipeline = [OrchestratorAgent, PublisherAgent]
 
             for agent_class in pipeline:
                 agent = agent_class()
