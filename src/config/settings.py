@@ -85,6 +85,7 @@ class Settings(BaseSettings):
 
     slack_oauth_client_id: SecretStr = SecretStr("")
     slack_oauth_client_secret: SecretStr = SecretStr("")
+    slack_mcp_url: str = "https://mcp.slack.com/mcp"
 
     oauth_state_ttl_sec: int = 600
     oauth_callback_base_url: str = "http://localhost:8000"

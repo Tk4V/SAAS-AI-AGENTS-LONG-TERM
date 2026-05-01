@@ -13,6 +13,7 @@ request them explicitly at authorize time.
 
 from __future__ import annotations
 
+from src.agent_tools.mcp.slack import slack_mcp_server
 from src.integrations._shared.config import OAuthProviderConfig
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
 from src.integrations.slack.compliance import install_slack_compliance
@@ -33,4 +34,5 @@ SLACK = OAuthProviderConfig(
     refresh_supported=True,
     api_base_url="https://slack.com/api",
     compliance_installer=install_slack_compliance,
+    mcp_factory=slack_mcp_server,
 )
