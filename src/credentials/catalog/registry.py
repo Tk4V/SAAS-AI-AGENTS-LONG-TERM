@@ -170,6 +170,22 @@ PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
             ),
         ),
     ),
+    ProviderCatalogEntry(
+        id="aws",
+        name="AWS",
+        category=ProviderCategory.CLOUD,
+        docs_url="https://docs.aws.amazon.com/aws-mcp/latest/userguide/what-is-mcp-server.html",
+        auth_methods=(
+            AuthMethod(
+                kind=AuthMethodKind.BEARER,
+                token_creation_url="https://console.aws.amazon.com/iam/home#/security_credentials",
+                token_format_hint='{"access_key_id": "AKIA...", "secret_access_key": "..."}',
+                header_name="Authorization",
+                placement="header",
+                prefix="",
+            ),
+        ),
+    ),
 )
 
 

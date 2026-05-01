@@ -48,6 +48,7 @@ class DeveloperAgent(SDKAgent):
         "mcp__github__*",
         "mcp__jira__*",
         "mcp__slack__*",
+        "mcp__aws__*",
     ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -175,9 +176,10 @@ class DeveloperAgent(SDKAgent):
                     "mcp__github__*",
                     "mcp__jira__*",
                     "mcp__slack__*",
+                    "mcp__aws__*",
                 ],
                 model="sonnet",
-                mcpServers=["github", "jira", "slack"],
+                mcpServers=["github", "jira", "slack", "aws"],
             ),
             "code-explorer": AgentDefinition(
                 description=(

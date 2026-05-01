@@ -26,3 +26,4 @@ class IntegrationCategory(str, enum.Enum):
     VCS = "vcs"
     CRM = "crm"
     IDENTITY = "identity"
+    CLOUD = "cloud"

@@ -17,6 +17,7 @@ class ProviderCategory(str, enum.Enum):
     COMMUNICATION = "communication"
     PROJECT_MANAGEMENT = "project_management"
     IDENTITY = "identity"
+    CLOUD = "cloud"
     OTHER = "other"
 
 

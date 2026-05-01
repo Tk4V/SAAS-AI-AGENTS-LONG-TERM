@@ -30,6 +30,7 @@ class ProviderKind(str, enum.Enum):
     JIRA = "jira"
     GOOGLE = "google"
     SLACK = "slack"
+    AWS = "aws"
 
 
 class Project(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):

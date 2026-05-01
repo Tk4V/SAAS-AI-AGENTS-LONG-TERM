@@ -123,8 +123,15 @@ class OAuthProviderConfig:
     def __post_init__(self) -> None:
         has_endpoints = bool(self.authorize_url and self.token_url)
         has_discovery = bool(self.server_metadata_url)
-        if not has_endpoints and not has_discovery:
+        has_mcp_only = bool(
+            self.mcp_factory
+            and not self.authorize_url
+            and not self.token_url
+            and not self.server_metadata_url
+        )
+        if not has_endpoints and not has_discovery and not has_mcp_only:
             raise ValueError(
                 f"Provider {self.kind.value!r} must declare either "
-                "(authorize_url + token_url) or server_metadata_url."
+                "(authorize_url + token_url), server_metadata_url, or mcp_factory "
+                "without any OAuth endpoints (MCP-only provider)."
             )
