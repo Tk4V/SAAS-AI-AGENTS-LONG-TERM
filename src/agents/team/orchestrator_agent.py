@@ -1,10 +1,9 @@
-"""Developer agent — autonomous code editor powered by Claude Agent SDK.
+"""Orchestrator agent — generalist Claude Agent SDK session leader.
 
-Clones the user's repositories, launches a Claude Agent SDK session scoped
-to the cloned workspace, and collects the resulting file changes as git diffs.
-The SDK session has access to file-system tools (Read, Edit, Write, Glob, Grep)
-and limited Bash commands, allowing it to explore code, plan changes, and
-implement them — exactly like a human developer using Claude Code.
+Receives a free-form user task, optionally clones the user's repositories
+when code access is needed, and runs a Claude Agent SDK session that
+delegates work to specialised sub-agents (code-implementer, code-explorer,
+test-runner, manager, repo-scanner). Returns file diffs and a summary.
 """
 
 from __future__ import annotations
@@ -19,22 +18,25 @@ from typing import Any, ClassVar
 
 from claude_agent_sdk import AgentDefinition
 
-from src.agents.prompts.dev_team.developer_prompts import SYSTEM_PROMPT as _DEV_SYSTEM_PROMPT
+from src.agents.prompts.team.orchestrator_prompts import (
+    SYSTEM_PROMPT as _ORCHESTRATOR_SYSTEM_PROMPT,
+)
 from src.agents.sdk_agent import SDKAgent
 from src.integrations.github import GitHubGitOps
 from src.utils.exceptions import PipelineError
 
 
-class DeveloperAgent(SDKAgent):
-    """Autonomous developer that explores, plans, and edits code via Claude Agent SDK.
+class OrchestratorAgent(SDKAgent):
+    """Generalist orchestrator that classifies a task and delegates to sub-agents.
 
-    The agent handles only the first repository in the task state. Multi-repo
-    support will require running separate SDK sessions per repo.
+    Handles only the first repository in the task state when code access is
+    needed. Multi-repo support will require running separate SDK sessions
+    per repo.
     """
 
-    name: ClassVar[str] = "developer"
-    role: ClassVar[str] = "Developer"
-    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _DEV_SYSTEM_PROMPT
+    name: ClassVar[str] = "orchestrator"
+    role: ClassVar[str] = "Orchestrator"
+    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _ORCHESTRATOR_SYSTEM_PROMPT
 
     SDK_ALLOWED_TOOLS: ClassVar[list[str]] = [
         "Read",
@@ -61,7 +63,7 @@ class DeveloperAgent(SDKAgent):
         repositories = state.get("repos") or []
 
         if not user_id:
-            raise PipelineError("Developer agent requires a user_id in the pipeline state.")
+            raise PipelineError("Orchestrator agent requires a user_id in the pipeline state.")
 
         workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id}_"))
         cloned_repos: list[dict[str, Any]] = []
@@ -80,7 +82,7 @@ class DeveloperAgent(SDKAgent):
                 primary_repo_name = cloned_repos[0]["name"]
 
             self.logger.info(
-                "developer.session_starting",
+                "orchestrator.session_starting",
                 repository=primary_repo_name,
                 has_repo=primary_repo_name is not None,
                 task_description=description[:100],
@@ -100,14 +102,14 @@ class DeveloperAgent(SDKAgent):
                 )
 
             changed_file_count = sum(len(v) for v in file_changes.values())
-            self.logger.info("developer.session_completed", files_changed=changed_file_count)
+            self.logger.info("orchestrator.session_completed", files_changed=changed_file_count)
 
             return {
                 "repos": cloned_repos,
                 "diffs": file_changes,
                 "context": {"summary": session_summary[:2000]},
                 "events": [{
-                    "name": "developer.completed",
+                    "name": "orchestrator.completed",
                     "agent": self.name,
                     "occurred_at": datetime.now(UTC).isoformat(),
                     "payload": {"files_changed": changed_file_count},
@@ -374,11 +376,11 @@ class DeveloperAgent(SDKAgent):
         repository_name: str,
     ) -> dict[str, list[dict[str, str]]]:
         """Collect tracked modifications and untracked new files after the SDK session."""
-        tracked_output = await DeveloperAgent._run_git_command(
+        tracked_output = await OrchestratorAgent._run_git_command(
             "git", "diff", "--name-status", "HEAD",
             working_directory=repository_path,
         )
-        untracked_output = await DeveloperAgent._run_git_command(
+        untracked_output = await OrchestratorAgent._run_git_command(
             "git", "ls-files", "--others", "--exclude-standard",
             working_directory=repository_path,
         )

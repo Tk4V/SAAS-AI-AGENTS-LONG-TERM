@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Direct developer agent test — bypasses the HTTP API and runs DeveloperAgent in-process.
+"""Direct orchestrator agent test — bypasses the HTTP API and runs OrchestratorAgent in-process.
 
 Useful for rapid iteration: no server needed, logs stream directly to stdout.
 
 Usage:
     # Code task — make changes to a repo
-    python scripts/test_developer_agent.py \
+    python scripts/test_orchestrator_agent.py \
         --repo https://github.com/owner/repo \
         --prompt "Add a health check endpoint"
 
     # Code task + Jira — analyze repo and create tickets (requires Jira OAuth seeded in DB)
-    python scripts/test_developer_agent.py \
+    python scripts/test_orchestrator_agent.py \
         --repo https://github.com/owner/repo \
         --prompt "Analyze this repo and create Jira tickets for the top 3 improvements"
 
     # Different branch
-    python scripts/test_developer_agent.py \
+    python scripts/test_orchestrator_agent.py \
         --repo https://github.com/owner/repo \
         --branch feature/my-branch \
         --prompt "Refactor the auth module"
@@ -60,7 +60,7 @@ class Logger:
 
 async def run_agent(args: argparse.Namespace) -> None:
     from src.db.session import db
-    from src.agents.dev_team.developer_agent import DeveloperAgent
+    from src.agents.team.orchestrator_agent import OrchestratorAgent
 
     await db.init()
 
@@ -79,17 +79,17 @@ async def run_agent(args: argparse.Namespace) -> None:
         "events": [],
     }
 
-    Logger.section("Developer Agent — Direct Test")
+    Logger.section("Orchestrator Agent — Direct Test")
     Logger.info(f"User ID  : {args.user_id}")
     Logger.info(f"Repo     : {args.repo} @ {args.branch}")
     Logger.info(f"Jira     : {'enabled' if args.with_jira else 'used if credential exists in DB'}")
     Logger.info(f"Prompt   : {args.prompt[:120]}")
 
     print()
-    Logger.info("Starting DeveloperAgent...")
+    Logger.info("Starting OrchestratorAgent...")
     print()
 
-    agent = DeveloperAgent()
+    agent = OrchestratorAgent()
     try:
         result = await agent(state)
     except Exception as exc:
@@ -131,7 +131,7 @@ async def run_agent(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run DeveloperAgent directly without the HTTP API"
+        description="Run OrchestratorAgent directly without the HTTP API"
     )
     parser.add_argument("--repo", required=True, help="GitHub repo URL")
     parser.add_argument("--branch", default="main", help="Branch to clone (default: main)")

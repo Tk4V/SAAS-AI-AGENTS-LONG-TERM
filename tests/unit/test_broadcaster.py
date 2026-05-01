@@ -31,7 +31,7 @@ class TestEventBroadcaster:
         q1, unsub1 = broadcaster.subscribe(task_id)
         q2, unsub2 = broadcaster.subscribe(task_id)
 
-        event = {"name": "multi.event", "agent": "developer", "payload": {}, "occurred_at": ""}
+        event = {"name": "multi.event", "agent": "orchestrator", "payload": {}, "occurred_at": ""}
         await broadcaster.publish(task_id, event)
 
         assert q1.get_nowait()["name"] == "multi.event"
