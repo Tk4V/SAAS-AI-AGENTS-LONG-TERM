@@ -1,57 +1,38 @@
 """Jira MCP server configuration.
 
-Returns a ``McpStdioServerConfig``-compatible dict for the ``mcp-atlassian``
-Python package. Pass the result directly to ``ClaudeAgentOptions.mcp_servers``.
+Returns an ``McpHttpServerConfig``-compatible dict for the official Atlassian
+remote MCP server. Pass the result directly to ``ClaudeAgentOptions.mcp_servers``.
 
-The server is started via ``uvx mcp-atlassian`` which downloads and runs the
-package in an isolated environment without polluting the app's virtualenv.
+The server accepts standard Bearer tokens issued by ``auth.atlassian.com`` and
+resolves the correct Jira instance from the token automatically — no cloud_id
+or site_url needed.
 """
 
 from __future__ import annotations
 
-import sys
 from typing import Any
+
+from src.config.settings import get_settings
 
 
 def jira_mcp_server(token: str, raw_metadata: dict[str, Any]) -> dict[str, object]:
-    """Return a stdio MCP server config for Jira, authenticated with *token*.
+    """Return an HTTP MCP server config for Jira, authenticated with *token*.
 
-    Uses ``sys.executable -c "from mcp_atlassian import main; main()"`` —
-    the Python equivalent of ``npx -y @modelcontextprotocol/server-github``.
-    Invoking via the known interpreter avoids PATH and shebang issues in Docker.
-
-    The env var names match what ``mcp-atlassian`` actually reads:
-    - ``JIRA_URL``                    → base URL of the Jira cloud instance
-    - ``ATLASSIAN_OAUTH_CLOUD_ID``    → cloud ID for the BYO-access-token OAuth path
-    - ``ATLASSIAN_OAUTH_ACCESS_TOKEN``→ the pre-issued OAuth access token
+    Points at the official Atlassian remote MCP server which accepts Bearer
+    tokens issued by ``auth.atlassian.com`` (our existing OAuth flow).
 
     Args:
         token: Atlassian OAuth access token with ``read:jira-work``,
             ``write:jira-work``, and ``read:jira-user`` scopes.
-        raw_metadata: Credential metadata stored after OAuth. Must contain
-            ``site_url`` (e.g. ``https://yourcompany.atlassian.net``) and
-            ``cloud_id`` (Atlassian cloud ID). Raises ``ValueError`` if either
-            is missing — ``BaseAgent.build_user_mcp_servers`` catches this and
-            skips the provider with a warning log.
+        raw_metadata: Unused — the remote server resolves the Jira instance
+            from the token automatically.
 
     Returns:
-        A ``McpStdioServerConfig`` dict ready for use in ``ClaudeAgentOptions``.
+        An ``McpHttpServerConfig`` dict ready for use in ``ClaudeAgentOptions``.
     """
-    site_url = raw_metadata.get("site_url") or ""
-    cloud_id = raw_metadata.get("cloud_id") or ""
-    if not site_url or not cloud_id:
-        raise ValueError(
-            "Jira raw_metadata is missing 'site_url' or 'cloud_id'. "
-            "These are stored during the OAuth callback — reconnect Jira to fix this."
-        )
+    settings = get_settings()
     return {
-        "type": "stdio",
-        "command": sys.executable,
-        "args": ["-c", "from mcp_atlassian import main; main()"],
-        "env": {
-            "JIRA_URL": site_url,
-            "ATLASSIAN_OAUTH_CLOUD_ID": cloud_id,
-            "ATLASSIAN_OAUTH_ACCESS_TOKEN": token,
-            "READ_ONLY_MODE": "false",
-        },
+        "type": "http",
+        "url": settings.jira_mcp_url,
+        "headers": {"Authorization": f"Bearer {token}"},
     }
