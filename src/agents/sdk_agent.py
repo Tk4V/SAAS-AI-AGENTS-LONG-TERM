@@ -219,35 +219,58 @@ class SDKAgent(BaseAgent):
         return result_text
 
     def _log_assistant_message(self, message: Any, turn: int) -> None:
-        """Log text output and tool calls from an assistant turn."""
-        text = getattr(message, "text", "") or ""
-        if text:
-            self._logger.info("assistant_text", turn=turn, text=text[:200])
+        """Log text output and tool calls from an assistant turn.
 
-        for tool_call in getattr(message, "tool_calls", []) or []:
-            tool_name = getattr(tool_call, "name", "unknown")
-            tool_input = getattr(tool_call, "input", {}) or {}
-            self._logger.info(
-                "tool_call",
-                turn=turn,
-                tool=tool_name,
-                detail=self._summarize_tool_call(tool_name, tool_input),
-            )
+        AssistantMessage.content is a list of ContentBlock (TextBlock,
+        ThinkingBlock, ToolUseBlock, ...). We branch on attributes to stay
+        forward-compatible with new block types.
+        """
+        parent_tool_use_id = getattr(message, "parent_tool_use_id", None)
+        for block in getattr(message, "content", []) or []:
+            if hasattr(block, "text") and getattr(block, "text", ""):
+                self._logger.info(
+                    "assistant_text",
+                    turn=turn,
+                    parent_tool_use_id=parent_tool_use_id,
+                    text=block.text[:500],
+                )
+            elif hasattr(block, "name") and hasattr(block, "input"):
+                tool_name = getattr(block, "name", "unknown")
+                tool_input = getattr(block, "input", {}) or {}
+                self._logger.info(
+                    "tool_call",
+                    turn=turn,
+                    parent_tool_use_id=parent_tool_use_id,
+                    tool=tool_name,
+                    tool_use_id=getattr(block, "id", None),
+                    detail=self._summarize_tool_call(tool_name, tool_input),
+                )
 
     def _log_tool_results(self, message: Any, turn: int) -> None:
-        """Log tool execution results returned to the SDK."""
-        for block in getattr(message, "content", []) or []:
-            if hasattr(block, "tool_use_id"):
-                content = str(getattr(block, "content", ""))
-                is_error = getattr(block, "is_error", False)
-                self._logger.info(
-                    "tool_result",
-                    turn=turn,
-                    is_error=is_error,
-                    result_length=len(content),
-                    tool_use_id=getattr(block, "tool_use_id", None),
-                    content=content[:2000] if is_error else content[:200],
-                )
+        """Log tool execution results returned to the SDK.
+
+        UserMessage.content may be a string (initial prompt) or a list of
+        ContentBlock — only ToolResultBlock entries are interesting here.
+        """
+        parent_tool_use_id = getattr(message, "parent_tool_use_id", None)
+        content = getattr(message, "content", None)
+        if not isinstance(content, list):
+            return
+        for block in content:
+            if not hasattr(block, "tool_use_id"):
+                continue
+            raw = getattr(block, "content", "")
+            text = raw if isinstance(raw, str) else str(raw)
+            is_error = bool(getattr(block, "is_error", False))
+            self._logger.info(
+                "tool_result",
+                turn=turn,
+                parent_tool_use_id=parent_tool_use_id,
+                is_error=is_error,
+                result_length=len(text),
+                tool_use_id=getattr(block, "tool_use_id", None),
+                content=text[:5000] if is_error else text[:5000],
+            )
 
     @staticmethod
     def _summarize_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:

@@ -62,25 +62,27 @@ class DeveloperAgent(SDKAgent):
 
         if not user_id:
             raise PipelineError("Developer agent requires a user_id in the pipeline state.")
-        if not repositories:
-            raise PipelineError("Developer agent requires at least one repository.")
 
-        github_token = await self.resolve_github_token(user_id=user_id)
         workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id}_"))
+        cloned_repos: list[dict[str, Any]] = []
+        primary_repo_path = workspace_path
+        primary_repo_name: str | None = None
 
         try:
-            cloned_repos = await self._clone_all_repositories(
-                github_token=github_token,
-                repositories=repositories,
-                workspace_path=workspace_path,
-            )
-
-            primary_repo_path = Path(cloned_repos[0]["local_path"])
-            primary_repo_name = cloned_repos[0]["name"]
+            if repositories:
+                github_token = await self.resolve_github_token(user_id=user_id)
+                cloned_repos = await self._clone_all_repositories(
+                    github_token=github_token,
+                    repositories=repositories,
+                    workspace_path=workspace_path,
+                )
+                primary_repo_path = Path(cloned_repos[0]["local_path"])
+                primary_repo_name = cloned_repos[0]["name"]
 
             self.logger.info(
                 "developer.session_starting",
                 repository=primary_repo_name,
+                has_repo=primary_repo_name is not None,
                 task_description=description[:100],
             )
 
@@ -90,12 +92,14 @@ class DeveloperAgent(SDKAgent):
                 mcp_context={"user_id": user_id},
             )
 
-            file_changes = await self._collect_file_changes(
-                repository_path=primary_repo_path,
-                repository_name=primary_repo_name,
-            )
+            file_changes: dict[str, list[dict[str, str]]] = {}
+            if primary_repo_name is not None:
+                file_changes = await self._collect_file_changes(
+                    repository_path=primary_repo_path,
+                    repository_name=primary_repo_name,
+                )
 
-            changed_file_count = len(file_changes.get(primary_repo_name, []))
+            changed_file_count = sum(len(v) for v in file_changes.values())
             self.logger.info("developer.session_completed", files_changed=changed_file_count)
 
             return {
@@ -120,21 +124,21 @@ class DeveloperAgent(SDKAgent):
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the Opus parent delegates to.
 
-        Hierarchy:
-        - Parent (Opus 4.7): plans, decomposes, delegates. Few turns, all
-          orchestration.
-        - `code-implementer` (Sonnet 4.6): the workhorse — actually edits
-          and writes files. Receives a precise instruction from the parent
-          and produces the change. This is where most LLM tokens are spent.
-        - `code-explorer` (Haiku 4.5): cheap, parallelisable exploration.
-          Map the repo, find files matching X, summarise a module.
-        - `test-runner` (Haiku 4.5): validate after edits.
+        The parent is a generalist orchestrator — it has no fixed role.
+        Real work happens inside narrow, strictly-prompted sub-agents:
 
-        Why three tiers: Opus reasoning is expensive — let it think hard
-        and short. Sonnet handles careful editing. Haiku does the wide
-        cheap stuff. The SDK runs Agent calls in parallel when the parent
-        spawns several at once, so this also wins wall-clock on
-        independent tasks.
+        - `code-explorer` (Haiku) — read-only repo discovery.
+        - `code-implementer` (Sonnet) — file edits.
+        - `test-runner` (Haiku) — lint/test validation post-edit.
+        - `manager` (Sonnet) — Jira inspection and mutation.
+        - `repo-scanner` (Sonnet) — read repo + create Jira tickets
+          (e.g. "scan for TODOs and file issues", "audit endpoints
+          and create Jira tasks for missing tests").
+
+        Why this shape: parent reasoning is expensive, so it stays short
+        and orchestrates. Sub-agents are cheap to swap and easy to lock
+        down with hard prompts. New task types = new sub-agent, no
+        pipeline rewiring.
         """
         return {
             "code-implementer": AgentDefinition(
@@ -173,6 +177,7 @@ class DeveloperAgent(SDKAgent):
                     "mcp__slack__*",
                 ],
                 model="sonnet",
+                mcpServers=["github", "jira"],
             ),
             "code-explorer": AgentDefinition(
                 description=(
@@ -215,6 +220,116 @@ class DeveloperAgent(SDKAgent):
                     "Bash(python -m py_compile*)",
                 ],
                 model="haiku",
+            ),
+            "manager": AgentDefinition(
+                description=(
+                    "Project-management worker on Sonnet with full Jira "
+                    "access. Delegate any non-code task that touches Jira "
+                    "tickets — read, search (JQL), create, update, "
+                    "transition, comment, assign, link, or bulk-mutate "
+                    "issues. Use this whenever the parent task is about "
+                    "ticket state rather than file edits. Hand it a clear "
+                    "instruction (project key or JQL + intended action) "
+                    "and it executes."
+                ),
+                prompt=(
+                    "You are a project manager operating Jira on behalf of "
+                    "the user. Use mcp__jira__* tools to inspect and "
+                    "mutate tickets.\n\n"
+                    "ABSOLUTE RULES — violating these is a critical "
+                    "failure:\n"
+                    "- NEVER invent issue keys, summaries, assignees, or "
+                    "any other ticket data. Every fact in your reply must "
+                    "come from a real tool response in this session.\n"
+                    "- NEVER claim a mutation succeeded unless you saw a "
+                    "successful tool response for that exact issue key.\n"
+                    "- If a tool returns an error or zero results, STOP "
+                    "the workflow and report the raw error / empty result "
+                    "to the parent. Do NOT guess what the user 'meant', "
+                    "do NOT fabricate a successful outcome.\n\n"
+                    "JQL discipline:\n"
+                    "- Sprint filtering syntax: `sprint = <numericSprintId>` "
+                    "or `sprint = \"Exact Sprint Name\"` or "
+                    "`sprint in openSprints()`. The bare form `sprint = 1` "
+                    "is almost always wrong — `1` is interpreted as a "
+                    "sprint ID, not 'sprint number 1'.\n"
+                    "- If the user asks for 'sprint N' by number, FIRST "
+                    "list available sprints (jira_get_agile_boards + "
+                    "jira_get_sprints_from_board) to resolve the real "
+                    "sprint ID or name, then build the JQL.\n\n"
+                    "Workflow for bulk or destructive actions (delete, "
+                    "transition many, remove from sprint):\n"
+                    "1. Resolve scope. Run jira_search with an explicit "
+                    "JQL. Capture every returned issue key verbatim — do "
+                    "NOT invent or extrapolate (no 'SCRUM-489 through "
+                    "SCRUM-491' unless each key was in the response).\n"
+                    "2. Echo back the captured keys to the parent before "
+                    "mutating, so the chain of custody is auditable.\n"
+                    "3. Execute one tool call PER issue (e.g. "
+                    "jira_delete_issue for each key). The MCP has no "
+                    "bulk endpoint — claiming bulk success without N "
+                    "individual tool calls is fabrication.\n"
+                    "4. After every tool call, treat the raw tool response "
+                    "as the source of truth. If a call errors, record the "
+                    "error verbatim and continue with the rest.\n"
+                    "5. Verify. Re-run jira_search with the same JQL and "
+                    "spot-check 2-3 keys with jira_get_issue (expect "
+                    "not-found). If verification disagrees with your "
+                    "mutation calls, report the discrepancy honestly.\n\n"
+                    "Reporting rules:\n"
+                    "- Include: JQL used, raw key list from step 1, count "
+                    "attempted, count confirmed by step 5 verification, "
+                    "and a per-issue failure list (key + error snippet) "
+                    "if any.\n"
+                    "- If scope is ambiguous, pick the safest reasonable "
+                    "interpretation, state the assumption explicitly, "
+                    "proceed — do not stall asking for clarification."
+                ),
+                tools=["mcp__jira__*"],
+                model="sonnet",
+                mcpServers=["jira"],
+            ),
+            "repo-scanner": AgentDefinition(
+                description=(
+                    "Repository auditor that reads code and creates Jira "
+                    "tickets from findings. Use for tasks like 'scan the "
+                    "repo for TODOs and file issues', 'audit endpoints "
+                    "missing tests and create tickets', 'find security "
+                    "smells and report each as a Jira ticket'. Combines "
+                    "read access to the working tree with mcp__jira__* "
+                    "create/link tools — does NOT edit code."
+                ),
+                prompt=(
+                    "You are a repo auditor. Workflow:\n"
+                    "1. Use Read/Glob/Grep to scan the working tree for "
+                    "what the parent asked. Capture concrete evidence "
+                    "(file:line + snippet) for every finding — never "
+                    "invent.\n"
+                    "2. Before creating tickets, list available Jira "
+                    "projects with jira_get_all_projects and pick the "
+                    "one the parent named. If no exact name/key match, "
+                    "STOP and report 'no matching project' to the "
+                    "parent — do NOT guess a near-miss project.\n"
+                    "3. For each finding, create one Jira issue via "
+                    "jira_create_issue. Include the file:line evidence "
+                    "in the description. Capture the returned issue key.\n"
+                    "4. After creation, verify each new key with "
+                    "jira_get_issue (expect found). If a creation "
+                    "errored, record the error verbatim.\n"
+                    "5. Report: project key used, list of (finding, "
+                    "issue key) pairs, list of failures. Never claim a "
+                    "ticket exists unless step 4 confirmed it.\n\n"
+                    "Hard rules: no file edits, no fabricated findings "
+                    "or issue keys, no asking the user."
+                ),
+                tools=[
+                    "Read",
+                    "Glob",
+                    "Grep",
+                    "mcp__jira__*",
+                ],
+                model="sonnet",
+                mcpServers=["jira"],
             ),
         }
 
