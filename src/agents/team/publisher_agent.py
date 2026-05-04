@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from src.agents.prompts.dev_team.publisher_prompts import (
+from src.agents.prompts.team.publisher_prompts import (
     PR_CONTENT_TEMPLATE,
     SYSTEM_PROMPT as _PUB_SYSTEM_PROMPT,
 )

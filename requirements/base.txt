@@ -28,7 +28,7 @@ httpx==0.28.1
 PyGithub==2.9.1
 gitpython==3.1.46
 
-# Jira MCP server (used by DeveloperAgent via mcp-atlassian)
+# Jira MCP server (used by OrchestratorAgent via mcp-atlassian)
 mcp-atlassian==0.21.1
 
 # Sandbox runtime

@@ -59,9 +59,7 @@ class Project(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
 class ProjectRepo(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """A single git repository attached to a project.
 
-    OAuth tokens are stored per-user in `user_oauth_credentials`, not per-repo.
-    The `oauth_token_encrypted` column exists in the schema for a future
-    per-repo override scenario but is not populated in M1.
+    OAuth tokens are stored per-user in the `credentials` table, not per-repo.
     """
 
     __tablename__ = "project_repos"
@@ -82,6 +80,5 @@ class ProjectRepo(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     default_branch: Mapped[str] = mapped_column(String(255), nullable=False, default="main")
-    oauth_token_encrypted: Mapped[str | None] = mapped_column(String, nullable=True)
 
     project: Mapped["Project"] = relationship("Project", back_populates="repos")
