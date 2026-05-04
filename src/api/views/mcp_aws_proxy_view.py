@@ -1,48 +1,12 @@
-"""Backend SigV4 proxy for the AWS MCP Preview server.
+"""SigV4 proxy for the AWS MCP Preview server.
 
-The AWS MCP Preview server (https://aws-mcp.{region}.api.aws/mcp) requires
-per-request SigV4 signing, which cannot be expressed as a static
-``Authorization: Bearer`` header. This proxy:
+Receives MCP calls from the Claude Agent SDK, signs them with SigV4 using
+IAM credentials from the ``X-AWS-Credentials`` JWT, and forwards to AWS.
 
-1. Receives MCP JSON-RPC calls from the Claude Agent SDK (standard HTTP).
-2. Reads the user's IAM credentials from the ``X-AWS-Credentials`` JWT set
-   by the MCP factory (``src/agent_tools/mcp/aws.py``).
-3. Verifies the JWT with the shared ``jwt_secret`` using joserfc.
-4. Signs the forwarded request with SigV4 using ``botocore``.
-5. Streams the AWS MCP response back to the caller.
-
-Security: the credential JWT is signed (HS256 / jwt_secret) so the proxy
-can reject tampered headers. The JWT is transmitted over TLS (HTTPS in
-production) and stripped before forwarding to AWS.
-
-SigV4 signing strategy
------------------------
-Only ``content-type`` and MCP session headers (``mcp-session-id``) are
-included in the canonical signed-headers list.  Headers like ``accept`` and
-``accept-encoding`` are forwarded to AWS but kept *outside* the signed set so
-that any in-flight normalisation by the HTTP client cannot invalidate the
-signature.  AWS SigV4 allows unsigned forwarded headers; only the headers
-listed in ``SignedHeaders`` are verified.
-
-Session management
-------------------
-The AWS MCP Preview server does not tolerate concurrent requests on the same
-session: parallel calls corrupt the session state and cause every subsequent
-request to receive ``400 / "Malformed JSON-RPC request"``.  The Claude Agent
-SDK does *not* re-initialise the MCP session when it receives HTTP 404, so the
-"return 404 to trigger re-init" strategy fails in practice.
-
-This proxy therefore owns the AWS session independently of the SDK session:
-
-* On ``initialize``: the proxy forwards the request to AWS (stripping any
-  stale ``mcp-session-id``), stores the new AWS session ID and the raw
-  initialize payload keyed by ``access_key_id:region``.
-* On subsequent calls: the proxy substitutes the stored AWS session ID for
-  whatever session ID the SDK sent.
-* On session error: the proxy transparently re-initialises the AWS session
-  (using the stored init payload), retries the failing request once, and
-  returns the result to the SDK as if nothing happened.  A per-session
-  asyncio lock prevents a concurrent re-init thundering herd.
+The proxy owns the AWS session independently of the SDK: on initialize it
+stores the session ID and init payload keyed by access_key_id:region. On
+session errors it transparently re-initialises and retries (AWS sessions
+don't survive concurrent requests and the SDK won't re-init on 404).
 """
 
 from __future__ import annotations
