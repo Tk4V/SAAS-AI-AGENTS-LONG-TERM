@@ -135,6 +135,32 @@ class CredentialRepository:
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
+    async def list_active_bearer_with_provider(
+        self,
+        *,
+        user_id: int,
+    ) -> list[Credential]:
+        """Return active BEARER credentials that carry a ``provider`` key in
+        ``metadata_json``.
+
+        These are non-OAuth integrations (e.g. AWS IAM credentials) that
+        expose an MCP server via the backend proxy. The ``provider`` value
+        is matched against ``ProviderCatalog`` to look up the MCP factory.
+        """
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        stmt = (
+            select(Credential)
+            .where(
+                Credential.user_id == user_id,
+                Credential.kind == CredentialKind.BEARER,
+                Credential.deleted_at.is_(None),
+                Credential.metadata_json.cast(JSONB)["provider"].astext.isnot(None),
+            )
+            .order_by(Credential.created_at.desc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def _find(
         self,
         *,

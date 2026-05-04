@@ -22,6 +22,7 @@ from src.api.views import (
     credentials_oauth_view,
     credentials_view,
     health_view,
+    mcp_aws_proxy_view,
     projects_view,
     providers_view,
     tasks_view,
@@ -93,6 +94,7 @@ class Application:
         app.include_router(credentials_oauth_view.router, prefix=prefix)
         app.include_router(providers_view.router, prefix=prefix)
         app.include_router(webhooks_view.router, prefix=prefix)
+        app.include_router(mcp_aws_proxy_view.router, prefix=prefix)
 
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:

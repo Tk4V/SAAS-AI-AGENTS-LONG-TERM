@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class BearerPayload(BaseModel):
@@ -36,7 +36,13 @@ class BearerMetadata(BaseModel):
     caller sets ``placement="header"`` with a different ``header_name`` and
     typically clears ``prefix``. For legacy APIs that take the key in the
     query string, set ``placement="query"`` and supply ``param_name``.
+
+    Extra fields are preserved so provider-specific metadata (e.g.
+    ``provider="aws"``, ``region="us-east-1"``) round-trips through the
+    service layer without loss.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     placement: Literal["header", "query"] = "header"
     header_name: str = Field(default="Authorization", min_length=1, max_length=128)

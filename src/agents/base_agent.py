@@ -197,4 +197,40 @@ class BaseAgent(ABC):
                         error=str(exc),
                     )
 
+            # Also mount MCP servers for BEARER credentials that carry a
+            # ``provider`` key — these are non-OAuth integrations (e.g. AWS)
+            # whose factories use the raw bearer token instead of an OAuth
+            # access token.
+            bearer_credentials = await repo.list_active_bearer_with_provider(user_id=user_id)
+            for credential in bearer_credentials:
+                provider_name = credential.metadata_json.get("provider")
+                if not provider_name:
+                    continue
+                try:
+                    provider = ProviderKind(provider_name)
+                except ValueError:
+                    continue
+                cfg = catalog.get(provider) if provider in catalog else None
+                if cfg is None or cfg.mcp_factory is None:
+                    continue
+                if provider.value in servers:
+                    # OAuth credential already registered for this provider; skip.
+                    continue
+                try:
+                    resolved = await resolver.resolve(
+                        user_id=user_id,
+                        credential_id=credential.id,
+                        purpose="mcp_factory",
+                    )
+                    servers[provider.value] = cfg.mcp_factory(
+                        resolved.payload.token,
+                        credential.metadata_json,
+                    )
+                except Exception as exc:
+                    self._logger.warning(
+                        "mcp.factory_failed",
+                        provider=provider_name,
+                        error=str(exc),
+                    )
+
         return servers

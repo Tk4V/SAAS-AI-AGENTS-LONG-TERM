@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     slack_mcp_url: str = "https://mcp.slack.com/mcp"
     jira_mcp_url: str = "https://mcp.atlassian.com/v1/mcp/authv2"
 
+    aws_mcp_url: str = "https://aws-mcp.us-east-1.api.aws/mcp"
+    aws_mcp_proxy_base_url: str = "http://127.0.0.1:8000"
+
     oauth_state_ttl_sec: int = 600
     oauth_callback_base_url: str = "http://localhost:8000"
     frontend_redirect_url: str = "http://localhost:3000/integrations"
