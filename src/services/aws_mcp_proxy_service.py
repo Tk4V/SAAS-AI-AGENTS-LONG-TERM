@@ -17,9 +17,6 @@ from src.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Header filter sets
-# ---------------------------------------------------------------------------
 
 STRIPPED_REQUEST_HEADERS = frozenset(
     {
@@ -43,10 +40,6 @@ STRIPPED_RESPONSE_HEADERS = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
-# Session-error detection
-# ---------------------------------------------------------------------------
-
 _SESSION_ERROR_KEYWORDS = (
     "sessionid not found",
     "session not found",
@@ -64,11 +57,6 @@ def is_session_error(body: bytes, headers: dict[str, str]) -> bool:
         return any(kw in msg for kw in _SESSION_ERROR_KEYWORDS)
     except Exception:
         return False
-
-
-# ---------------------------------------------------------------------------
-# Session store
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -89,11 +77,6 @@ def _get_session_lock(key: str) -> asyncio.Lock:
     if key not in _session_locks:
         _session_locks[key] = asyncio.Lock()
     return _session_locks[key]
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def decode_credentials(credentials_jwt: str) -> tuple[str, str, str]:
@@ -246,11 +229,6 @@ async def handle_proxy_request(
     }
 
     return status_code, response_headers, raw
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 async def _handle_session_error(
