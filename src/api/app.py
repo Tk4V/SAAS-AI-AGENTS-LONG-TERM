@@ -26,6 +26,7 @@ from src.api.views import (
     mcp_aws_proxy_view,
     projects_view,
     providers_view,
+    subagents_view,
     tasks_view,
     tools_view,
     webhooks_view,
@@ -97,6 +98,7 @@ class Application:
         app.include_router(credentials_oauth_view.router, prefix=prefix)
         app.include_router(providers_view.router, prefix=prefix)
         app.include_router(tools_view.router, prefix=prefix)
+        app.include_router(subagents_view.router, prefix=prefix)
         app.include_router(webhooks_view.router, prefix=prefix)
         app.include_router(mcp_aws_proxy_view.router, prefix=prefix)
 

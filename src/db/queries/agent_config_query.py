@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models.agent_config import AgentToolConfig, MCPServerConfig, UserToolConfig
+from src.db.models.agent_config import AgentToolConfig, MCPServerConfig, Subagent, SubagentTool, UserToolConfig
 from src.db.models.credential import Credential, CredentialKind
 
 
@@ -208,6 +210,54 @@ class AgentConfigRepository:
             UserToolConfig.is_enabled.is_(False),
         )
         return set((await self._session.execute(stmt)).scalars().all())
+
+
+    # ── Subagent methods ──────────────────────────────────────────────────────
+
+    async def list_subagents(self) -> list[Subagent]:
+        """Return all active subagents ordered by sort_order, tools eagerly loaded."""
+        stmt = (
+            select(Subagent)
+            .where(Subagent.is_active.is_(True))
+            .order_by(Subagent.sort_order)
+        )
+        return list((await self._session.execute(stmt)).scalars().unique().all())
+
+    async def get_subagent_by_name(self, name: str) -> Subagent | None:
+        """Return a subagent by its slug name, or None if not found."""
+        stmt = select(Subagent).where(Subagent.name == name)
+        return (await self._session.execute(stmt)).scalars().first()
+
+    async def get_mcp_config_by_provider(self, provider_name: str) -> MCPServerConfig | None:
+        """Return an active MCPServerConfig by provider name, or None."""
+        stmt = select(MCPServerConfig).where(
+            MCPServerConfig.provider_name == provider_name,
+            MCPServerConfig.is_active.is_(True),
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
+    async def upsert_subagent_tool(
+        self,
+        *,
+        subagent_id: UUID,
+        mcp_server_config_id: UUID,
+        is_active: bool,
+    ) -> SubagentTool:
+        """Insert or toggle is_active on a SubagentTool row."""
+        stmt = (
+            insert(SubagentTool)
+            .values(
+                subagent_id=subagent_id,
+                mcp_server_config_id=mcp_server_config_id,
+                is_active=is_active,
+            )
+            .on_conflict_do_update(
+                constraint="uq_subagent_tools_subagent_mcp",
+                set_={"is_active": is_active},
+            )
+            .returning(SubagentTool)
+        )
+        return (await self._session.execute(stmt)).scalar_one()
 
 
 def _extract_provider(pattern: str, known_providers: set[str]) -> str | None:

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -85,3 +86,57 @@ class UserToolConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     subagent_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tool_pattern: Mapped[str] = mapped_column(String(256), nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class Subagent(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A named subagent the orchestrator can delegate to.
+
+    Stores the full AgentDefinition config (description, system_prompt, model)
+    that was previously hardcoded in ``OrchestratorAgent.build_subagents()``.
+    System tools (Read, Edit, Bash variants) remain hardcoded in Python;
+    only MCP tool associations are stored here via ``SubagentTool``.
+    """
+
+    __tablename__ = "subagents"
+    __table_args__ = (UniqueConstraint("name", name="uq_subagents_name"),)
+
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(32), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    tools: Mapped[list[SubagentTool]] = relationship(
+        back_populates="subagent",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class SubagentTool(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Allowed MCP tool association between a Subagent and an MCPServerConfig.
+
+    One row means the subagent is allowed to use that MCP integration.
+    ``is_active=False`` soft-disables the association without removing the row.
+    """
+
+    __tablename__ = "subagent_tools"
+    __table_args__ = (
+        UniqueConstraint(
+            "subagent_id", "mcp_server_config_id",
+            name="uq_subagent_tools_subagent_mcp",
+        ),
+    )
+
+    subagent_id: Mapped[UUID] = mapped_column(
+        ForeignKey("subagents.id", ondelete="CASCADE"), nullable=False
+    )
+    mcp_server_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("mcp_server_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    subagent: Mapped[Subagent] = relationship(back_populates="tools")
+    mcp_server: Mapped[MCPServerConfig] = relationship(lazy="selectin")

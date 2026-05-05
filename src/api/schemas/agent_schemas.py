@@ -14,24 +14,46 @@ class AgentsList(BaseModel):
 
 
 class ToolRead(BaseModel):
-    """One tool entry as seen by the user."""
+    """One MCP tool entry."""
 
-    tool_pattern: str
-    agent_name: str
-    subagent_role: str | None
+    tool_name: str        # Provider key, e.g. "github", "jira"
     sort_order: int
-    requires_provider: str | None  # None for built-in tools (Read, Edit, Bash…)
-    is_enabled: bool               # Reflects user override; defaults to True
+    display_name: str     # Human-readable name, e.g. "GitHub"
+    category: str         # Integration category, e.g. "vcs", "cloud"
 
 
 class ToolsList(BaseModel):
     items: list[ToolRead]
 
 
-class ToolUpdate(BaseModel):
-    """Payload for enabling or disabling a tool."""
+class SubagentToolRead(BaseModel):
+    """One MCP tool allowed for a subagent."""
 
-    agent_name: str
-    subagent_role: str | None = None
-    tool_pattern: str
-    is_enabled: bool
+    tool_name: str     # "mcp__github__*"
+    display_name: str  # "GitHub"
+    category: str      # "vcs"
+    is_active: bool
+
+
+class SubagentRead(BaseModel):
+    """One subagent entry."""
+
+    name: str           # "code-implementer"
+    display_name: str   # "Code Implementer"
+    description: str
+    system_prompt: str
+    model: str          # "sonnet" | "haiku"
+    sort_order: int
+    is_active: bool
+    tools: list[SubagentToolRead]
+
+
+class SubagentsList(BaseModel):
+    items: list[SubagentRead]
+
+
+class SubagentToolUpdate(BaseModel):
+    """Payload for enabling or disabling an MCP tool on a subagent."""
+
+    mcp_provider: str  # provider name, e.g. "github"
+    is_active: bool
