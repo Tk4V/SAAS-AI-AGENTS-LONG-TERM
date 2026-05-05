@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.agent_config import AgentToolConfig, MCPServerConfig, UserToolConfig
+from src.db.models.credential import Credential, CredentialKind
 
 
 class AgentConfigRepository:
@@ -80,18 +81,15 @@ class AgentConfigRepository:
     ) -> list[dict]:
         """Return all system tool entries enriched with user preferences and provider info.
 
-        Each dict carries:
-          - tool_pattern, agent_name, subagent_role, sort_order
-          - requires_provider: provider name extracted from mcp__<provider>__* patterns, else None
-          - is_enabled: False if the user has disabled it, True otherwise
+        ``is_enabled`` reflects three things in priority order:
+          1. False  — tool requires a provider the user hasn't connected (hard gate)
+          2. False  — user has explicitly disabled it in user_tool_configs
+          3. True   — system default (no user override row)
         """
         # Load system tools
         filters = [AgentToolConfig.is_active.is_(True)]
         if agent_name is not None:
             filters.append(AgentToolConfig.agent_name == agent_name)
-            if subagent_role is None and agent_name is not None:
-                # Only filter subagent_role when agent_name is also specified
-                pass
 
         stmt = (
             select(AgentToolConfig)
@@ -100,11 +98,14 @@ class AgentConfigRepository:
         )
         system_rows = list((await self._session.execute(stmt)).scalars().all())
 
-        # Load MCP provider names for requires_provider lookup
+        # MCP provider names (for requires_provider extraction)
         mcp_stmt = select(MCPServerConfig.provider_name).where(MCPServerConfig.is_active.is_(True))
         mcp_providers: set[str] = set((await self._session.execute(mcp_stmt)).scalars().all())
 
-        # Load user-level overrides
+        # Providers the user has actually connected (OAuth or bearer with provider key)
+        connected_providers = await self._get_connected_providers(user_id)
+
+        # User-level explicit overrides
         user_stmt = select(UserToolConfig).where(UserToolConfig.user_id == user_id)
         user_rows = (await self._session.execute(user_stmt)).scalars().all()
         user_map: dict[tuple, bool] = {
@@ -116,7 +117,14 @@ class AgentConfigRepository:
         for row in system_rows:
             provider = _extract_provider(row.tool_pattern, mcp_providers)
             key = (row.agent_name, row.subagent_role, row.tool_pattern)
-            is_enabled = user_map.get(key, True)
+
+            if provider is not None and provider not in connected_providers:
+                # Provider not connected — tool unavailable regardless of user prefs
+                is_enabled = False
+            else:
+                # Built-in tool or connected provider — respect user override or default True
+                is_enabled = user_map.get(key, True)
+
             results.append({
                 "tool_pattern": row.tool_pattern,
                 "agent_name": row.agent_name,
@@ -126,6 +134,31 @@ class AgentConfigRepository:
                 "is_enabled": is_enabled,
             })
         return results
+
+    async def _get_connected_providers(self, user_id: int) -> set[str]:
+        """Return the set of provider names the user has active credentials for."""
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        oauth_stmt = select(
+            cast(Credential.metadata_json, JSONB)["provider"].astext
+        ).where(
+            Credential.user_id == user_id,
+            Credential.kind == CredentialKind.OAUTH,
+            Credential.deleted_at.is_(None),
+        )
+        bearer_stmt = select(
+            cast(Credential.metadata_json, JSONB)["provider"].astext
+        ).where(
+            Credential.user_id == user_id,
+            Credential.kind == CredentialKind.BEARER,
+            Credential.deleted_at.is_(None),
+            cast(Credential.metadata_json, JSONB)["provider"].astext.isnot(None),
+        )
+
+        oauth_providers = set((await self._session.execute(oauth_stmt)).scalars().all())
+        bearer_providers = set((await self._session.execute(bearer_stmt)).scalars().all())
+        return oauth_providers | bearer_providers
 
     async def upsert_user_tool(
         self,

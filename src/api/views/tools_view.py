@@ -40,7 +40,7 @@ class ToolsView:
         return ToolsList(items=[ToolRead(**row) for row in rows])
 
     @staticmethod
-    @router.put("", response_model=ToolRead)
+    @router.patch("", response_model=ToolRead)
     async def update(
         payload: ToolUpdate,
         user: CurrentUserDep,
