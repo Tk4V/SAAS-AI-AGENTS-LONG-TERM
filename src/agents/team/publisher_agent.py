@@ -40,7 +40,8 @@ class PublisherAgent(SDKAgent):
     role: ClassVar[str] = "Publisher"
     SDK_SYSTEM_PROMPT: ClassVar[str | None] = _PUB_SYSTEM_PROMPT
 
-    SDK_ALLOWED_TOOLS: ClassVar[list[str]] = ["mcp__github__*"]
+    # Empty — top-level tools are loaded from the agent_tool_configs DB table.
+    SDK_ALLOWED_TOOLS: ClassVar[list[str]] = []
     SDK_MODEL: ClassVar[str] = "claude-haiku-4-5"
     SDK_MAX_TURNS: ClassVar[int] = 50
     SDK_PERMISSION_MODE: ClassVar[str] = "acceptEdits"

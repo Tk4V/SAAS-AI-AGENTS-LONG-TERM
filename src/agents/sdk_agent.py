@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from src.agents.base_agent import BaseAgent
+from src.db.queries.agent_config_query import AgentConfigRepository
+from src.db.session import db
 
 
 class SDKAgent(BaseAgent):
@@ -67,7 +69,8 @@ class SDKAgent(BaseAgent):
         if not isinstance(tools, list):
             raise TypeError(
                 f"{cls.__name__} must declare SDK_ALLOWED_TOOLS as a list "
-                f"(got {type(tools).__name__}). See SDKAgent docstring.",
+                f"(got {type(tools).__name__}). Use [] to load from DB. "
+                f"See SDKAgent docstring.",
             )
 
     @abstractmethod
@@ -115,6 +118,22 @@ class SDKAgent(BaseAgent):
         """
         return {}
 
+    async def _load_allowed_tools(self, *, user_id: int | None = None) -> list[str]:
+        """Load allowed tool patterns from DB, applying user overrides.
+
+        Fetches system tool patterns from ``agent_tool_configs`` and filters
+        out any the user has disabled in ``user_tool_configs``. Falls back to
+        the class-level ``SDK_ALLOWED_TOOLS`` list when the DB returns no rows.
+        """
+        async with db.session_scope() as session:
+            repo = AgentConfigRepository(session)
+            patterns = await repo.get_effective_tool_patterns(
+                user_id=user_id, agent_name=self.name
+            )
+        if patterns:
+            return patterns
+        return list(self.SDK_ALLOWED_TOOLS)
+
     async def run_sdk_session(
         self,
         *,
@@ -153,7 +172,7 @@ class SDKAgent(BaseAgent):
         mcp_servers = await self.build_mcp_servers(context)
         subagents = await self.build_subagents(context)
 
-        allowed_tools = list(self.SDK_ALLOWED_TOOLS)
+        allowed_tools = await self._load_allowed_tools(user_id=context.get("user_id"))
         if extra_allowed_tools:
             allowed_tools.extend(extra_allowed_tools)
 

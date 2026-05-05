@@ -7,6 +7,8 @@ contract on top of this base.
 
 from __future__ import annotations
 
+import json
+import time
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
@@ -22,8 +24,10 @@ from src.credentials.oauth.refresher import OAuthRefresher
 from src.credentials.oauth.token_provider import OAuthTokenProvider
 from src.credentials.payloads.oauth import OAuthMetadata
 from src.credentials.resolver import CredentialResolver
+from src.db.models.agent_config import MCPServerConfig
 from src.db.models.credential import CredentialKind
 from src.db.models.project import ProviderKind
+from src.db.queries.agent_config_query import AgentConfigRepository
 from src.db.queries.credential_event_query import CredentialEventRepository
 from src.db.queries.credential_query import CredentialRepository
 from src.db.session import db
@@ -33,6 +37,7 @@ from src.integrations._shared import (
     OAuthStateSigner,
     ProviderCatalog,
 )
+from src.services.agent_config_service import AgentConfigService
 
 
 class BaseAgent(ABC):
@@ -136,101 +141,125 @@ class BaseAgent(ABC):
         )
 
     async def build_user_mcp_servers(self, *, user_id: int) -> dict[str, Any]:
-        """Mount MCP servers for every OAuth integration the user has connected.
+        """Mount MCP servers for every integration the user has connected.
 
-        Reads the user's active OAuth credentials from the unified
-        ``credentials`` table, runs each one through ``CredentialResolver`` so
-        expiring tokens are refreshed, and asks the matching provider config
-        for an MCP factory. Providers without an ``mcp_factory`` are skipped;
-        factories that raise are logged but never block the others.
-
-        Returns a dict ready for ``ClaudeAgentOptions.mcp_servers`` keyed by
-        ``ProviderKind.value`` (e.g. ``"github"``, ``"jira"``).
+        Loads MCP connection configs from the ``mcp_server_configs`` table,
+        resolves the user's active credentials, injects the live token into
+        each config, and returns a dict ready for ``ClaudeAgentOptions.mcp_servers``
+        keyed by provider name (e.g. ``"github"``, ``"jira"``).
         """
-        catalog = ProviderCatalog()
         kinds = get_kind_registry()
         cipher = self._ctx.cipher
+        svc = AgentConfigService()
 
         async with db.session_scope() as session:
-            repo = CredentialRepository(session)
+            cfg_repo = AgentConfigRepository(session)
+            cred_repo = CredentialRepository(session)
             events = CredentialEventRepository(session)
             auditor = CredentialAuditor(events=events)
             refresher = OAuthRefresher(
-                repository=repo,
+                repository=cred_repo,
                 adapter=self._oauth_adapter,
                 cipher=cipher,
                 handler=kinds.get(CredentialKind.OAUTH),
             )
             resolver = CredentialResolver(
-                repository=repo,
+                repository=cred_repo,
                 cipher=cipher,
                 kinds=kinds,
                 auditor=auditor,
                 oauth_refresher=refresher,
             )
-            credentials = await repo.list_active_oauth_for_user(user_id=user_id)
+
+            mcp_configs = await cfg_repo.list_active_mcp_configs()
+            config_map: dict[str, MCPServerConfig] = {c.provider_name: c for c in mcp_configs}
 
             servers: dict[str, Any] = {}
-            for credential in credentials:
+
+            # OAuth credentials (GitHub, Jira, Slack, …)
+            oauth_credentials = await cred_repo.list_active_oauth_for_user(user_id=user_id)
+            for credential in oauth_credentials:
                 metadata = OAuthMetadata(**credential.metadata_json)
-                try:
-                    provider = ProviderKind(metadata.provider)
-                except ValueError:
-                    continue
-                cfg = catalog.get(provider) if provider in catalog else None
-                if cfg is None or cfg.mcp_factory is None:
+                provider_name = metadata.provider
+                mcp_cfg = config_map.get(provider_name)
+                if mcp_cfg is None:
                     continue
                 try:
                     resolved = await resolver.resolve(
                         user_id=user_id,
                         credential_id=credential.id,
-                        purpose="mcp_factory",
+                        purpose="mcp_server",
                     )
-                    servers[provider.value] = cfg.mcp_factory(
-                        resolved.payload.access_token,
-                        dict(metadata.raw),
-                    )
+                    token = resolved.payload.access_token
+                    servers[provider_name] = svc.build_mcp_server_entry(config=mcp_cfg, token=token)
                 except Exception as exc:
                     self._logger.warning(
-                        "mcp.factory_failed",
-                        provider=provider.value,
+                        "mcp.build_failed",
+                        provider=provider_name,
                         error=str(exc),
                     )
 
-            # Also mount MCP servers for BEARER credentials that carry a
-            # ``provider`` key — these are non-OAuth integrations (e.g. AWS)
-            # whose factories use the raw bearer token instead of an OAuth
-            # access token.
-            bearer_credentials = await repo.list_active_bearer_with_provider(user_id=user_id)
+            # Bearer credentials (AWS, …)
+            bearer_credentials = await cred_repo.list_active_bearer_with_provider(user_id=user_id)
             for credential in bearer_credentials:
                 provider_name = credential.metadata_json.get("provider")
-                if not provider_name:
+                if not provider_name or provider_name in servers:
                     continue
-                try:
-                    provider = ProviderKind(provider_name)
-                except ValueError:
-                    continue
-                cfg = catalog.get(provider) if provider in catalog else None
-                if cfg is None or cfg.mcp_factory is None:
-                    continue
-                if provider.value in servers:
-                    # OAuth credential already registered for this provider; skip.
+                mcp_cfg = config_map.get(provider_name)
+                if mcp_cfg is None:
                     continue
                 try:
                     resolved = await resolver.resolve(
                         user_id=user_id,
                         credential_id=credential.id,
-                        purpose="mcp_factory",
+                        purpose="mcp_server",
                     )
-                    servers[provider.value] = cfg.mcp_factory(
-                        resolved.payload.token,
-                        credential.metadata_json,
+                    token = self._build_bearer_token(
+                        provider_name=provider_name,
+                        raw_token=resolved.payload.token,
+                        metadata=credential.metadata_json,
                     )
+                    servers[provider_name] = svc.build_mcp_server_entry(config=mcp_cfg, token=token)
                 except Exception as exc:
                     self._logger.warning(
-                        "mcp.factory_failed",
+                        "mcp.build_failed",
                         provider=provider_name,
                         error=str(exc),
                     )
 
         return servers
+
+    def _build_bearer_token(
+        self,
+        *,
+        provider_name: str,
+        raw_token: str,
+        metadata: dict[str, Any],
+    ) -> str:
+        """Prepare the token value to inject into a bearer credential's MCP config.
+
+        For most providers this is the raw token. For AWS, the IAM credentials
+        stored in ``raw_token`` are packed into a short-lived HS256 JWT that
+        the backend SigV4 proxy validates before signing the forwarded request.
+        """
+        if provider_name != "aws":
+            return raw_token
+
+        from joserfc import jwt
+        from joserfc.jwk import OctKey
+
+        creds: dict[str, str] = json.loads(raw_token)
+        region: str = metadata.get("region", "us-east-1")
+        now = int(time.time())
+        key = OctKey.import_key(self._ctx.settings.jwt_secret.get_secret_value().encode())
+        return jwt.encode(
+            {"alg": "HS256"},
+            {
+                "iat": now,
+                "exp": now + 3600,
+                "access_key_id": creds["access_key_id"],
+                "secret_access_key": creds["secret_access_key"],
+                "region": region,
+            },
+            key,
+        )

@@ -22,6 +22,8 @@ from src.agents.prompts.team.orchestrator_prompts import (
     SYSTEM_PROMPT as _ORCHESTRATOR_SYSTEM_PROMPT,
 )
 from src.agents.sdk_agent import SDKAgent
+from src.db.queries.agent_config_query import AgentConfigRepository
+from src.db.session import db
 from src.integrations.github import GitHubGitOps
 from src.utils.exceptions import PipelineError
 
@@ -38,20 +40,8 @@ class OrchestratorAgent(SDKAgent):
     role: ClassVar[str] = "Orchestrator"
     SDK_SYSTEM_PROMPT: ClassVar[str | None] = _ORCHESTRATOR_SYSTEM_PROMPT
 
-    SDK_ALLOWED_TOOLS: ClassVar[list[str]] = [
-        "Read",
-        "Edit",
-        "Write",
-        "Glob",
-        "Grep",
-        "Bash(git diff*)",
-        "Bash(python -m py_compile*)",
-        "Agent",
-        "mcp__github__*",
-        "mcp__jira__*",
-        "mcp__slack__*",
-        "mcp__aws__*",
-    ]
+    # Empty — top-level tools are loaded from the agent_tool_configs DB table.
+    SDK_ALLOWED_TOOLS: ClassVar[list[str]] = []
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
         """Clone repositories, run the SDK session, and return file changes.
@@ -127,22 +117,21 @@ class OrchestratorAgent(SDKAgent):
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the Opus parent delegates to.
 
-        The parent is a generalist orchestrator — it has no fixed role.
-        Real work happens inside narrow, strictly-prompted sub-agents:
-
-        - `code-explorer` (Haiku) — read-only repo discovery.
-        - `code-implementer` (Sonnet) — file edits.
-        - `test-runner` (Haiku) — lint/test validation post-edit.
-        - `manager` (Sonnet) — Jira inspection and mutation.
-        - `repo-scanner` (Sonnet) — read repo + create Jira tickets
-          (e.g. "scan for TODOs and file issues", "audit endpoints
-          and create Jira tasks for missing tests").
-
-        Why this shape: parent reasoning is expensive, so it stays short
-        and orchestrates. Sub-agents are cheap to swap and easy to lock
-        down with hard prompts. New task types = new sub-agent, no
-        pipeline rewiring.
+        Tool patterns are loaded from the ``agent_tool_configs`` DB table
+        (agent_name='orchestrator', subagent_role=<role>). This keeps the
+        prompts and descriptions here while tool lists are managed in the DB.
         """
+        user_id: int | None = context.get("user_id")
+        async with db.session_scope() as session:
+            repo = AgentConfigRepository(session)
+            implementer_tools, explorer_tools, runner_tools, manager_tools, scanner_tools = (
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-implementer"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-explorer"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="test-runner"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="manager"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="repo-scanner"),
+            )
+
         return {
             "code-implementer": AgentDefinition(
                 description=(
@@ -167,19 +156,7 @@ class OrchestratorAgent(SDKAgent):
                     "call from the parent's instruction. If something is "
                     "genuinely impossible, return a short explanation."
                 ),
-                tools=[
-                    "Read",
-                    "Edit",
-                    "Write",
-                    "Glob",
-                    "Grep",
-                    "Bash(git diff*)",
-                    "Bash(python -m py_compile*)",
-                    "mcp__github__*",
-                    "mcp__jira__*",
-                    "mcp__slack__*",
-                    "mcp__aws__*",
-                ],
+                tools=implementer_tools,
                 model="sonnet",
                 mcpServers=["github", "jira", "slack", "aws"],
             ),
@@ -201,7 +178,7 @@ class OrchestratorAgent(SDKAgent):
                     "asks multiple questions, answer each in a labelled "
                     "section."
                 ),
-                tools=["Read", "Glob", "Grep"],
+                tools=explorer_tools,
                 model="haiku",
             ),
             "test-runner": AgentDefinition(
@@ -217,12 +194,7 @@ class OrchestratorAgent(SDKAgent):
                     "with file:line and one-line cause. Do not paste full "
                     "tracebacks."
                 ),
-                tools=[
-                    "Bash(pytest*)",
-                    "Bash(ruff*)",
-                    "Bash(mypy*)",
-                    "Bash(python -m py_compile*)",
-                ],
+                tools=runner_tools,
                 model="haiku",
             ),
             "manager": AgentDefinition(
@@ -289,7 +261,7 @@ class OrchestratorAgent(SDKAgent):
                     "interpretation, state the assumption explicitly, "
                     "proceed — do not stall asking for clarification."
                 ),
-                tools=["mcp__jira__*"],
+                tools=manager_tools,
                 model="sonnet",
                 mcpServers=["jira"],
             ),
@@ -326,12 +298,7 @@ class OrchestratorAgent(SDKAgent):
                     "Hard rules: no file edits, no fabricated findings "
                     "or issue keys, no asking the user."
                 ),
-                tools=[
-                    "Read",
-                    "Glob",
-                    "Grep",
-                    "mcp__jira__*",
-                ],
+                tools=scanner_tools,
                 model="sonnet",
                 mcpServers=["jira"],
             ),

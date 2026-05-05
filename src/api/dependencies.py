@@ -28,6 +28,7 @@ from src.credentials.oauth.token_provider import OAuthTokenProvider
 from src.credentials.resolver import CredentialResolver
 from src.credentials.service import CredentialService
 from src.db.models.credential import CredentialKind
+from src.db.queries.agent_config_query import AgentConfigRepository
 from src.db.queries.credential_event_query import CredentialEventRepository
 from src.db.queries.credential_query import CredentialRepository
 from src.db.queries.project_query import ProjectRepository
@@ -303,4 +304,13 @@ def get_public_provider_catalog_dep() -> PublicProviderCatalog:
 
 PublicProviderCatalogDep = Annotated[
     PublicProviderCatalog, Depends(get_public_provider_catalog_dep)
+]
+
+
+def get_agent_config_repository(session: SessionDep) -> AgentConfigRepository:
+    return AgentConfigRepository(session)
+
+
+AgentConfigRepositoryDep = Annotated[
+    AgentConfigRepository, Depends(get_agent_config_repository)
 ]
