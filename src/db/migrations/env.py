@@ -64,10 +64,17 @@ def _do_run_migrations(connection: Connection) -> None:
 
 
 async def _run_async_migrations() -> None:
-    connectable = create_async_engine(
-        settings.database_url,
-        poolclass=pool.NullPool,
-    )
+    connect_args: dict[str, object] = {}
+    if settings.aws_secret_manager and settings.aws_region:
+        from src.db.password_provider import SecretsManagerPasswordProvider
+
+        provider = SecretsManagerPasswordProvider(settings.aws_secret_manager, settings.aws_region)
+        connect_args["password"] = provider
+        url = settings.database_url_no_password
+    else:
+        url = settings.database_url
+
+    connectable = create_async_engine(url, poolclass=pool.NullPool, connect_args=connect_args)
     async with connectable.connect() as connection:
         await connection.run_sync(_do_run_migrations)
     await connectable.dispose()
