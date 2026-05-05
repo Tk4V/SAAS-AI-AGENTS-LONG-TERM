@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Boolean, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,3 +60,28 @@ class MCPServerConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         default=dict,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class UserToolConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Per-user tool overrides on top of the system ``agent_tool_configs`` defaults.
+
+    A row with ``is_enabled=False`` suppresses that tool pattern for the user
+    even if the system config has it active. If no row exists for a given
+    (user_id, agent_name, subagent_role, tool_pattern) tuple, the system
+    default applies.
+    """
+
+    __tablename__ = "user_tool_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "agent_name", "subagent_role", "tool_pattern",
+            name="uq_user_tool_configs_user_agent_role_pattern",
+        ),
+        Index("ix_user_tool_configs_user_agent", "user_id", "agent_name"),
+    )
+
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    subagent_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tool_pattern: Mapped[str] = mapped_column(String(256), nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

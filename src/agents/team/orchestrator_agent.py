@@ -121,14 +121,15 @@ class OrchestratorAgent(SDKAgent):
         (agent_name='orchestrator', subagent_role=<role>). This keeps the
         prompts and descriptions here while tool lists are managed in the DB.
         """
+        user_id: int | None = context.get("user_id")
         async with db.session_scope() as session:
             repo = AgentConfigRepository(session)
             implementer_tools, explorer_tools, runner_tools, manager_tools, scanner_tools = (
-                await repo.get_tool_patterns(agent_name="orchestrator", subagent_role="code-implementer"),
-                await repo.get_tool_patterns(agent_name="orchestrator", subagent_role="code-explorer"),
-                await repo.get_tool_patterns(agent_name="orchestrator", subagent_role="test-runner"),
-                await repo.get_tool_patterns(agent_name="orchestrator", subagent_role="manager"),
-                await repo.get_tool_patterns(agent_name="orchestrator", subagent_role="repo-scanner"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-implementer"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-explorer"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="test-runner"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="manager"),
+                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="repo-scanner"),
             )
 
         return {

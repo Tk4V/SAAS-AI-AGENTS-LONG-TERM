@@ -118,17 +118,18 @@ class SDKAgent(BaseAgent):
         """
         return {}
 
-    async def _load_allowed_tools(self) -> list[str]:
-        """Load allowed tool patterns from DB, falling back to ``SDK_ALLOWED_TOOLS``.
+    async def _load_allowed_tools(self, *, user_id: int | None = None) -> list[str]:
+        """Load allowed tool patterns from DB, applying user overrides.
 
-        Fetches active top-level tool patterns for this agent from the
-        ``agent_tool_configs`` table. Falls back to the class-level
-        ``SDK_ALLOWED_TOOLS`` list when the DB returns no rows (e.g. during
-        local development before running migrations).
+        Fetches system tool patterns from ``agent_tool_configs`` and filters
+        out any the user has disabled in ``user_tool_configs``. Falls back to
+        the class-level ``SDK_ALLOWED_TOOLS`` list when the DB returns no rows.
         """
         async with db.session_scope() as session:
             repo = AgentConfigRepository(session)
-            patterns = await repo.get_tool_patterns(agent_name=self.name)
+            patterns = await repo.get_effective_tool_patterns(
+                user_id=user_id, agent_name=self.name
+            )
         if patterns:
             return patterns
         return list(self.SDK_ALLOWED_TOOLS)
@@ -171,7 +172,7 @@ class SDKAgent(BaseAgent):
         mcp_servers = await self.build_mcp_servers(context)
         subagents = await self.build_subagents(context)
 
-        allowed_tools = await self._load_allowed_tools()
+        allowed_tools = await self._load_allowed_tools(user_id=context.get("user_id"))
         if extra_allowed_tools:
             allowed_tools.extend(extra_allowed_tools)
 
