@@ -14,24 +14,13 @@ class AgentsList(BaseModel):
 
 
 class ToolRead(BaseModel):
-    """One tool entry as seen by the user."""
+    """One MCP tool entry."""
 
-    tool_pattern: str
-    agent_name: str
-    subagent_role: str | None
+    tool_name: str        # Provider key, e.g. "github", "jira"
     sort_order: int
-    requires_provider: str | None  # None for built-in tools (Read, Edit, Bash…)
-    is_enabled: bool               # Reflects user override; defaults to True
+    display_name: str     # Human-readable name, e.g. "GitHub"
+    category: str         # Integration category, e.g. "vcs", "cloud"
 
 
 class ToolsList(BaseModel):
     items: list[ToolRead]
-
-
-class ToolUpdate(BaseModel):
-    """Payload for enabling or disabling a tool."""
-
-    agent_name: str
-    subagent_role: str | None = None
-    tool_pattern: str
-    is_enabled: bool
