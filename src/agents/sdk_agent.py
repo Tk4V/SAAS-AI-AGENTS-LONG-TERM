@@ -47,6 +47,13 @@ class SDKAgent(BaseAgent):
     result text.
     """
 
+    # Built-in SDK tools always available for this agent — never in DB,
+    # never user-configurable. Subclasses declare the exact set they need
+    # (Read, Edit, Write, Glob, Grep, Agent, Bash variants, etc.).
+    # Integration tools (mcp__*) are resolved at runtime from the DB and
+    # filtered by the user's connected credentials.
+    SYSTEM_TOOLS: ClassVar[list[str]] = []
+
     # No default — concrete subclass MUST set this. __init_subclass__ enforces.
     SDK_ALLOWED_TOOLS: ClassVar[list[str]]
 
@@ -119,20 +126,20 @@ class SDKAgent(BaseAgent):
         return {}
 
     async def _load_allowed_tools(self, *, user_id: int | None = None) -> list[str]:
-        """Load allowed tool patterns from DB, applying user overrides.
+        """Return the full allowed-tool list for a session.
 
-        Fetches system tool patterns from ``agent_tool_configs`` and filters
-        out any the user has disabled in ``user_tool_configs``. Falls back to
-        the class-level ``SDK_ALLOWED_TOOLS`` list when the DB returns no rows.
+        Combines two sources:
+        - ``SYSTEM_TOOLS`` (ClassVar) — built-in SDK tools hardcoded per agent,
+          never user-configurable.
+        - MCP patterns from ``agent_tool_configs`` in the DB, filtered by the
+          user's active credentials via ``get_effective_tool_patterns``.
         """
         async with db.session_scope() as session:
             repo = AgentConfigRepository(session)
-            patterns = await repo.get_effective_tool_patterns(
+            mcp_patterns = await repo.get_effective_tool_patterns(
                 user_id=user_id, agent_name=self.name
             )
-        if patterns:
-            return patterns
-        return list(self.SDK_ALLOWED_TOOLS)
+        return list(self.SYSTEM_TOOLS) + mcp_patterns
 
     async def run_sdk_session(
         self,

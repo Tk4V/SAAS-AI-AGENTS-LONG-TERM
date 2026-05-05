@@ -40,8 +40,11 @@ class OrchestratorAgent(SDKAgent):
     role: ClassVar[str] = "Orchestrator"
     SDK_SYSTEM_PROMPT: ClassVar[str | None] = _ORCHESTRATOR_SYSTEM_PROMPT
 
-    # Empty — top-level tools are loaded from the agent_tool_configs DB table.
     SDK_ALLOWED_TOOLS: ClassVar[list[str]] = []
+    SYSTEM_TOOLS: ClassVar[list[str]] = [
+        "Read", "Edit", "Write", "Glob", "Grep",
+        "Bash(git diff*)", "Bash(python -m py_compile*)", "Agent",
+    ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
         """Clone repositories, run the SDK session, and return file changes.
@@ -117,20 +120,32 @@ class OrchestratorAgent(SDKAgent):
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the Opus parent delegates to.
 
-        Tool patterns are loaded from the ``agent_tool_configs`` DB table
-        (agent_name='orchestrator', subagent_role=<role>). This keeps the
-        prompts and descriptions here while tool lists are managed in the DB.
+        Each subagent's tool list = hardcoded system tools (Read/Edit/Bash/etc.)
+        + MCP integration patterns loaded from the DB (user-gated by credentials).
         """
+        # System tools per subagent role — hardcoded, never in DB or user-configurable.
+        _implementer_sys = ["Read", "Edit", "Write", "Glob", "Grep", "Bash(git diff*)", "Bash(python -m py_compile*)"]
+        _explorer_sys    = ["Read", "Glob", "Grep"]
+        _runner_sys      = ["Bash(pytest*)", "Bash(ruff*)", "Bash(mypy*)", "Bash(python -m py_compile*)"]
+        _manager_sys: list[str] = []
+        _scanner_sys     = ["Read", "Glob", "Grep"]
+
         user_id: int | None = context.get("user_id")
         async with db.session_scope() as session:
             repo = AgentConfigRepository(session)
-            implementer_tools, explorer_tools, runner_tools, manager_tools, scanner_tools = (
+            implementer_mcp, explorer_mcp, runner_mcp, manager_mcp, scanner_mcp = (
                 await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-implementer"),
                 await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-explorer"),
                 await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="test-runner"),
                 await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="manager"),
                 await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="repo-scanner"),
             )
+
+        implementer_tools = _implementer_sys + implementer_mcp
+        explorer_tools    = _explorer_sys + explorer_mcp
+        runner_tools      = _runner_sys + runner_mcp
+        manager_tools     = _manager_sys + manager_mcp
+        scanner_tools     = _scanner_sys + scanner_mcp
 
         return {
             "code-implementer": AgentDefinition(

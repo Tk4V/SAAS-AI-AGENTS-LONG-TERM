@@ -79,86 +79,45 @@ def upgrade() -> None:
         ON CONFLICT (provider_name) DO NOTHING
     """))
 
-    # ── Seed: agent_tool_configs ──────────────────────────────────────────────
-    # Orchestrator top-level tools (subagent_role IS NULL)
+    # ── Seed: agent_tool_configs (MCP integration tools only) ────────────────
+    # Built-in SDK tools (Read, Edit, Write, Glob, Grep, Agent, Bash variants)
+    # live in code as SYSTEM_TOOLS ClassVar per agent — never seeded here.
+
+    # Orchestrator top-level MCP tools (subagent_role IS NULL)
     op.execute(sa.text("""
         INSERT INTO agent_tool_configs
             (id, agent_name, subagent_role, tool_pattern, sort_order, is_active, created_at, updated_at)
         SELECT gen_random_uuid(), 'orchestrator', NULL, pattern, idx, true, now(), now()
         FROM (VALUES
-            (0,  'Read'),
-            (1,  'Edit'),
-            (2,  'Write'),
-            (3,  'Glob'),
-            (4,  'Grep'),
-            (5,  'Bash(git diff*)'),
-            (6,  'Bash(python -m py_compile*)'),
-            (7,  'Agent'),
-            (8,  'mcp__github__*'),
-            (9,  'mcp__jira__*'),
-            (10, 'mcp__slack__*'),
-            (11, 'mcp__aws__*')
+            (0, 'mcp__github__*'),
+            (1, 'mcp__jira__*'),
+            (2, 'mcp__slack__*'),
+            (3, 'mcp__aws__*')
         ) AS t(idx, pattern)
         WHERE NOT EXISTS (
             SELECT 1 FROM agent_tool_configs WHERE agent_name = 'orchestrator' AND subagent_role IS NULL
         )
     """))
 
-    # Orchestrator / code-implementer
+    # Orchestrator / code-implementer MCP tools
     op.execute(sa.text("""
         INSERT INTO agent_tool_configs
             (id, agent_name, subagent_role, tool_pattern, sort_order, is_active, created_at, updated_at)
         SELECT gen_random_uuid(), 'orchestrator', 'code-implementer', pattern, idx, true, now(), now()
         FROM (VALUES
-            (0,  'Read'),
-            (1,  'Edit'),
-            (2,  'Write'),
-            (3,  'Glob'),
-            (4,  'Grep'),
-            (5,  'Bash(git diff*)'),
-            (6,  'Bash(python -m py_compile*)'),
-            (7,  'mcp__github__*'),
-            (8,  'mcp__jira__*'),
-            (9,  'mcp__slack__*'),
-            (10, 'mcp__aws__*')
+            (0, 'mcp__github__*'),
+            (1, 'mcp__jira__*'),
+            (2, 'mcp__slack__*'),
+            (3, 'mcp__aws__*')
         ) AS t(idx, pattern)
         WHERE NOT EXISTS (
             SELECT 1 FROM agent_tool_configs WHERE agent_name = 'orchestrator' AND subagent_role = 'code-implementer'
         )
     """))
 
-    # Orchestrator / code-explorer
-    op.execute(sa.text("""
-        INSERT INTO agent_tool_configs
-            (id, agent_name, subagent_role, tool_pattern, sort_order, is_active, created_at, updated_at)
-        SELECT gen_random_uuid(), 'orchestrator', 'code-explorer', pattern, idx, true, now(), now()
-        FROM (VALUES
-            (0, 'Read'),
-            (1, 'Glob'),
-            (2, 'Grep')
-        ) AS t(idx, pattern)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM agent_tool_configs WHERE agent_name = 'orchestrator' AND subagent_role = 'code-explorer'
-        )
-    """))
+    # code-explorer and test-runner have no MCP tools — no rows needed.
 
-    # Orchestrator / test-runner
-    op.execute(sa.text("""
-        INSERT INTO agent_tool_configs
-            (id, agent_name, subagent_role, tool_pattern, sort_order, is_active, created_at, updated_at)
-        SELECT gen_random_uuid(), 'orchestrator', 'test-runner', pattern, idx, true, now(), now()
-        FROM (VALUES
-            (0, 'Bash(pytest*)'),
-            (1, 'Bash(ruff*)'),
-            (2, 'Bash(mypy*)'),
-            (3, 'Bash(python -m py_compile*)')
-        ) AS t(idx, pattern)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM agent_tool_configs WHERE agent_name = 'orchestrator' AND subagent_role = 'test-runner'
-        )
-    """))
-
-    # Orchestrator / manager
+    # Orchestrator / manager MCP tools
     op.execute(sa.text("""
         INSERT INTO agent_tool_configs
             (id, agent_name, subagent_role, tool_pattern, sort_order, is_active, created_at, updated_at)
@@ -171,16 +130,13 @@ def upgrade() -> None:
         )
     """))
 
-    # Orchestrator / repo-scanner
+    # Orchestrator / repo-scanner MCP tools
     op.execute(sa.text("""
         INSERT INTO agent_tool_configs
             (id, agent_name, subagent_role, tool_pattern, sort_order, is_active, created_at, updated_at)
         SELECT gen_random_uuid(), 'orchestrator', 'repo-scanner', pattern, idx, true, now(), now()
         FROM (VALUES
-            (0, 'Read'),
-            (1, 'Glob'),
-            (2, 'Grep'),
-            (3, 'mcp__jira__*')
+            (0, 'mcp__jira__*')
         ) AS t(idx, pattern)
         WHERE NOT EXISTS (
             SELECT 1 FROM agent_tool_configs WHERE agent_name = 'orchestrator' AND subagent_role = 'repo-scanner'
