@@ -24,3 +24,36 @@ class ToolRead(BaseModel):
 
 class ToolsList(BaseModel):
     items: list[ToolRead]
+
+
+class SubagentToolRead(BaseModel):
+    """One MCP tool allowed for a subagent."""
+
+    tool_name: str     # "mcp__github__*"
+    display_name: str  # "GitHub"
+    category: str      # "vcs"
+    is_active: bool
+
+
+class SubagentRead(BaseModel):
+    """One subagent entry."""
+
+    name: str           # "code-implementer"
+    display_name: str   # "Code Implementer"
+    description: str
+    system_prompt: str
+    model: str          # "sonnet" | "haiku"
+    sort_order: int
+    is_active: bool
+    tools: list[SubagentToolRead]
+
+
+class SubagentsList(BaseModel):
+    items: list[SubagentRead]
+
+
+class SubagentToolUpdate(BaseModel):
+    """Payload for enabling or disabling an MCP tool on a subagent."""
+
+    mcp_provider: str  # provider name, e.g. "github"
+    is_active: bool

@@ -118,206 +118,43 @@ class OrchestratorAgent(SDKAgent):
         return await self.build_user_mcp_servers(user_id=context["user_id"])
 
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Specialised sub-agents the Opus parent delegates to.
+        """Specialised sub-agents the orchestrator delegates to.
 
-        Each subagent's tool list = hardcoded system tools (Read/Edit/Bash/etc.)
-        + MCP integration patterns loaded from the DB (user-gated by credentials).
+        Subagent config (description, system_prompt, model, allowed MCP tools)
+        is loaded from the database. System tools (Read, Edit, Bash, etc.) are
+        hardcoded here per subagent name and merged with the DB-driven MCP tools.
         """
-        # System tools per subagent role — hardcoded, never in DB or user-configurable.
-        _implementer_sys = ["Read", "Edit", "Write", "Glob", "Grep", "Bash(git diff*)", "Bash(python -m py_compile*)"]
-        _explorer_sys    = ["Read", "Glob", "Grep"]
-        _runner_sys      = ["Bash(pytest*)", "Bash(ruff*)", "Bash(mypy*)", "Bash(python -m py_compile*)"]
-        _manager_sys: list[str] = []
-        _scanner_sys     = ["Read", "Glob", "Grep"]
+        _system_tools: dict[str, list[str]] = {
+            "code-implementer": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(git diff*)", "Bash(python -m py_compile*)"],
+            "code-explorer":    ["Read", "Glob", "Grep"],
+            "test-runner":      ["Bash(pytest*)", "Bash(ruff*)", "Bash(mypy*)", "Bash(python -m py_compile*)"],
+            "manager":          [],
+            "repo-scanner":     ["Read", "Glob", "Grep"],
+        }
 
         user_id: int | None = context.get("user_id")
         async with db.session_scope() as session:
             repo = AgentConfigRepository(session)
-            implementer_mcp, explorer_mcp, runner_mcp, manager_mcp, scanner_mcp = (
-                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-implementer"),
-                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="code-explorer"),
-                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="test-runner"),
-                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="manager"),
-                await repo.get_effective_tool_patterns(user_id=user_id, agent_name="orchestrator", subagent_role="repo-scanner"),
+            subagents = await repo.list_subagents()
+            connected = await repo._get_connected_providers(user_id) if user_id else set()
+
+        result: dict[str, Any] = {}
+        for subagent in subagents:
+            system_tools = _system_tools.get(subagent.name, [])
+            active_mcp_providers = [
+                t.mcp_server.provider_name
+                for t in subagent.tools
+                if t.is_active and t.mcp_server.provider_name in connected
+            ]
+            mcp_patterns = [f"mcp__{p}__*" for p in active_mcp_providers]
+            result[subagent.name] = AgentDefinition(
+                description=subagent.description,
+                prompt=subagent.system_prompt,
+                tools=system_tools + mcp_patterns,
+                model=subagent.model,
+                mcpServers=active_mcp_providers or None,
             )
-
-        implementer_tools = _implementer_sys + implementer_mcp
-        explorer_tools    = _explorer_sys + explorer_mcp
-        runner_tools      = _runner_sys + runner_mcp
-        manager_tools     = _manager_sys + manager_mcp
-        scanner_tools     = _scanner_sys + scanner_mcp
-
-        return {
-            "code-implementer": AgentDefinition(
-                description=(
-                    "Implementation worker on Sonnet. Hand it a precise, "
-                    "scoped task — 'add endpoint X to file Y', 'refactor "
-                    "function Z to support W', 'create file P with content "
-                    "Q' — and it executes the file edits and returns a "
-                    "summary of what changed. Use this for ALL non-trivial "
-                    "editing work. Do not micromanage; give it the goal "
-                    "and trust it. Spawn several in parallel when changes "
-                    "are independent (different files, no shared state)."
-                ),
-                prompt=(
-                    "You are a senior implementation engineer. The parent "
-                    "agent has already planned the work and hands you a "
-                    "scoped task. Execute it: read the files you need, "
-                    "make the edits with Edit/Write, verify your changes "
-                    "compile/parse where applicable, and return a concise "
-                    "summary of what you changed (file paths + one-line "
-                    "description per change). Do not re-plan, do not ask "
-                    "clarifying questions back — make the best judgement "
-                    "call from the parent's instruction. If something is "
-                    "genuinely impossible, return a short explanation."
-                ),
-                tools=implementer_tools,
-                model="sonnet",
-                mcpServers=["github", "jira", "slack", "aws"],
-            ),
-            "code-explorer": AgentDefinition(
-                description=(
-                    "Read-only repository explorer on Haiku. Use to map "
-                    "the codebase, find files matching a pattern, "
-                    "summarise a module, or answer 'where is X "
-                    "implemented?' — discovery, not editing. Returns a "
-                    "concise summary, never raw file contents. Spawn "
-                    "multiple in parallel for independent searches."
-                ),
-                prompt=(
-                    "You are a fast, focused code explorer. Read, glob, "
-                    "and grep across the repository to answer the parent "
-                    "agent's question. Always return a concise structured "
-                    "summary (file paths + 1-2 sentence context per item), "
-                    "never paste large file contents back. If the parent "
-                    "asks multiple questions, answer each in a labelled "
-                    "section."
-                ),
-                tools=explorer_tools,
-                model="haiku",
-            ),
-            "test-runner": AgentDefinition(
-                description=(
-                    "Run the project's tests, linter, or type checker and "
-                    "report failures. Use after edits to validate without "
-                    "burning parent turns on long Bash output."
-                ),
-                prompt=(
-                    "You are a test/lint runner. Execute the requested "
-                    "command (pytest, ruff, mypy) and return a compact "
-                    "report: pass/fail summary plus the first 5 failures "
-                    "with file:line and one-line cause. Do not paste full "
-                    "tracebacks."
-                ),
-                tools=runner_tools,
-                model="haiku",
-            ),
-            "manager": AgentDefinition(
-                description=(
-                    "Project-management worker on Sonnet with full Jira "
-                    "access. Delegate any non-code task that touches Jira "
-                    "tickets — read, search (JQL), create, update, "
-                    "transition, comment, assign, link, or bulk-mutate "
-                    "issues. Use this whenever the parent task is about "
-                    "ticket state rather than file edits. Hand it a clear "
-                    "instruction (project key or JQL + intended action) "
-                    "and it executes."
-                ),
-                prompt=(
-                    "You are a project manager operating Jira on behalf of "
-                    "the user. Use mcp__jira__* tools to inspect and "
-                    "mutate tickets.\n\n"
-                    "ABSOLUTE RULES — violating these is a critical "
-                    "failure:\n"
-                    "- NEVER invent issue keys, summaries, assignees, or "
-                    "any other ticket data. Every fact in your reply must "
-                    "come from a real tool response in this session.\n"
-                    "- NEVER claim a mutation succeeded unless you saw a "
-                    "successful tool response for that exact issue key.\n"
-                    "- If a tool returns an error or zero results, STOP "
-                    "the workflow and report the raw error / empty result "
-                    "to the parent. Do NOT guess what the user 'meant', "
-                    "do NOT fabricate a successful outcome.\n\n"
-                    "JQL discipline:\n"
-                    "- Sprint filtering syntax: `sprint = <numericSprintId>` "
-                    "or `sprint = \"Exact Sprint Name\"` or "
-                    "`sprint in openSprints()`. The bare form `sprint = 1` "
-                    "is almost always wrong — `1` is interpreted as a "
-                    "sprint ID, not 'sprint number 1'.\n"
-                    "- If the user asks for 'sprint N' by number, FIRST "
-                    "list available sprints (jira_get_agile_boards + "
-                    "jira_get_sprints_from_board) to resolve the real "
-                    "sprint ID or name, then build the JQL.\n\n"
-                    "Workflow for bulk or destructive actions (delete, "
-                    "transition many, remove from sprint):\n"
-                    "1. Resolve scope. Run jira_search with an explicit "
-                    "JQL. Capture every returned issue key verbatim — do "
-                    "NOT invent or extrapolate (no 'SCRUM-489 through "
-                    "SCRUM-491' unless each key was in the response).\n"
-                    "2. Echo back the captured keys to the parent before "
-                    "mutating, so the chain of custody is auditable.\n"
-                    "3. Execute one tool call PER issue (e.g. "
-                    "jira_delete_issue for each key). The MCP has no "
-                    "bulk endpoint — claiming bulk success without N "
-                    "individual tool calls is fabrication.\n"
-                    "4. After every tool call, treat the raw tool response "
-                    "as the source of truth. If a call errors, record the "
-                    "error verbatim and continue with the rest.\n"
-                    "5. Verify. Re-run jira_search with the same JQL and "
-                    "spot-check 2-3 keys with jira_get_issue (expect "
-                    "not-found). If verification disagrees with your "
-                    "mutation calls, report the discrepancy honestly.\n\n"
-                    "Reporting rules:\n"
-                    "- Include: JQL used, raw key list from step 1, count "
-                    "attempted, count confirmed by step 5 verification, "
-                    "and a per-issue failure list (key + error snippet) "
-                    "if any.\n"
-                    "- If scope is ambiguous, pick the safest reasonable "
-                    "interpretation, state the assumption explicitly, "
-                    "proceed — do not stall asking for clarification."
-                ),
-                tools=manager_tools,
-                model="sonnet",
-                mcpServers=["jira"],
-            ),
-            "repo-scanner": AgentDefinition(
-                description=(
-                    "Repository auditor that reads code and creates Jira "
-                    "tickets from findings. Use for tasks like 'scan the "
-                    "repo for TODOs and file issues', 'audit endpoints "
-                    "missing tests and create tickets', 'find security "
-                    "smells and report each as a Jira ticket'. Combines "
-                    "read access to the working tree with mcp__jira__* "
-                    "create/link tools — does NOT edit code."
-                ),
-                prompt=(
-                    "You are a repo auditor. Workflow:\n"
-                    "1. Use Read/Glob/Grep to scan the working tree for "
-                    "what the parent asked. Capture concrete evidence "
-                    "(file:line + snippet) for every finding — never "
-                    "invent.\n"
-                    "2. Before creating tickets, list available Jira "
-                    "projects with jira_get_all_projects and pick the "
-                    "one the parent named. If no exact name/key match, "
-                    "STOP and report 'no matching project' to the "
-                    "parent — do NOT guess a near-miss project.\n"
-                    "3. For each finding, create one Jira issue via "
-                    "jira_create_issue. Include the file:line evidence "
-                    "in the description. Capture the returned issue key.\n"
-                    "4. After creation, verify each new key with "
-                    "jira_get_issue (expect found). If a creation "
-                    "errored, record the error verbatim.\n"
-                    "5. Report: project key used, list of (finding, "
-                    "issue key) pairs, list of failures. Never claim a "
-                    "ticket exists unless step 4 confirmed it.\n\n"
-                    "Hard rules: no file edits, no fabricated findings "
-                    "or issue keys, no asking the user."
-                ),
-                tools=scanner_tools,
-                model="sonnet",
-                mcpServers=["jira"],
-            ),
-        }
+        return result
 
     async def _clone_all_repositories(
         self,
