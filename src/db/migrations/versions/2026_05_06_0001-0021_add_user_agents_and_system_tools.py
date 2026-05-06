@@ -54,6 +54,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # ── Drop legacy agents table from 0001_initial (different schema) ─────────
+    op.drop_table("agents")
+
     # ── system_tools ──────────────────────────────────────────────────────────
     op.create_table(
         "system_tools",
@@ -256,6 +259,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore the legacy agents table that existed before this migration.
+    op.create_table(
+        "agents",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("slug", sa.String(length=128), nullable=False),
+        sa.Column("display_name", sa.String(length=255), nullable=False),
+        sa.Column("role", sa.String(length=64), nullable=False),
+        sa.Column("model_alias", sa.String(length=64), nullable=False, server_default="sonnet"),
+        sa.Column("system_prompt", sa.String(), nullable=False, server_default=""),
+        sa.Column("config", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default="{}"),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_agents"),
+        sa.UniqueConstraint("user_id", "slug", name="uq_agents_user_id_slug"),
+    )
+    op.create_index("ix_agents_user_id", "agents", ["user_id"])
+
     op.drop_index("ix_tasks_agent_id", table_name="tasks")
     op.drop_constraint("fk_tasks_agent_id_agents", "tasks", type_="foreignkey")
     op.drop_column("tasks", "agent_id")
