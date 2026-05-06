@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     jwt_audience: str = "clyde-ai"
 
+    # Comma-separated list of Django user ids allowed to call /admin/* endpoints.
+    # Temporary stand-in for a proper role/permission claim from Django; once
+    # the JWT carries `is_admin`, switch to that and drop this list.
+    admin_user_ids: str = ""
+
     anthropic_api_key: SecretStr = SecretStr("")
     anthropic_model_haiku: str = "claude-haiku-4-5"
 

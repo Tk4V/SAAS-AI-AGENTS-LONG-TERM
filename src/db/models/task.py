@@ -44,6 +44,12 @@ class Task(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    agent_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("agents.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     description: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus, name="task_status", values_callable=lambda e: [x.value for x in e]),

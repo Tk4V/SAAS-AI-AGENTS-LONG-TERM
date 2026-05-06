@@ -15,14 +15,17 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
+from uuid import UUID
 
 from claude_agent_sdk import AgentDefinition
 
 from src.agents.prompts.team.orchestrator_prompts import (
-    SYSTEM_PROMPT as _ORCHESTRATOR_SYSTEM_PROMPT,
+    BASE_SYSTEM_PROMPT as _ORCHESTRATOR_BASE_PROMPT,
+    build_system_prompt as _build_orchestrator_prompt,
 )
 from src.agents.sdk_agent import SDKAgent
 from src.db.queries.agent_config_query import AgentConfigRepository
+from src.db.queries.agent_query import AgentRepository
 from src.db.session import db
 from src.integrations.github import GitHubGitOps
 from src.utils.exceptions import PipelineError
@@ -38,7 +41,9 @@ class OrchestratorAgent(SDKAgent):
 
     name: ClassVar[str] = "orchestrator"
     role: ClassVar[str] = "Orchestrator"
-    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _ORCHESTRATOR_SYSTEM_PROMPT
+    # Filled per-instance from the user's Agent record (or the base prompt
+    # if the user has no override). Set in execute() before run_sdk_session.
+    SDK_SYSTEM_PROMPT: ClassVar[str | None] = _ORCHESTRATOR_BASE_PROMPT
 
     SDK_ALLOWED_TOOLS: ClassVar[list[str]] = []
     SYSTEM_TOOLS: ClassVar[list[str]] = [
@@ -53,11 +58,35 @@ class OrchestratorAgent(SDKAgent):
         """
         task_id = state.get("task_id") or "unknown"
         user_id = state.get("user_id")
+        agent_id_raw = state.get("agent_id")
         description = state.get("description") or ""
         repositories = state.get("repos") or []
 
         if not user_id:
             raise PipelineError("Orchestrator agent requires a user_id in the pipeline state.")
+        if not agent_id_raw:
+            raise PipelineError("Orchestrator agent requires an agent_id in the pipeline state.")
+        agent_id = UUID(agent_id_raw) if isinstance(agent_id_raw, str) else agent_id_raw
+
+        # Resolve the user's Agent record + dynamically build the system prompt.
+        # We reuse the same `links` payload in build_subagents below to avoid
+        # a second DB round-trip during the SDK session bootstrap.
+        async with db.session_scope() as session:
+            agent_repo = AgentRepository(session)
+            agent_record = await agent_repo.get(user_id=user_id, agent_id=agent_id)
+            links = await agent_repo.list_subagents_for_agent(agent_id=agent_id)
+            # Detach so the relations stay readable after the session closes.
+            session.expunge_all()
+
+        subagent_descriptors = [
+            (link.subagent.name, link.subagent.display_name, link.subagent.description)
+            for link in links
+        ]
+        self.SDK_SYSTEM_PROMPT = _build_orchestrator_prompt(
+            agent_record.system_prompt, subagent_descriptors,
+        )
+        self._agent_id = agent_id  # kept for diagnostics / future re-load
+        self._cached_links = links  # picked up by build_subagents
 
         workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id}_"))
         cloned_repos: list[dict[str, Any]] = []
@@ -120,37 +149,43 @@ class OrchestratorAgent(SDKAgent):
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the orchestrator delegates to.
 
-        Subagent config (description, system_prompt, model, allowed MCP tools)
-        is loaded from the database. System tools (Read, Edit, Bash, etc.) are
-        hardcoded here per subagent name and merged with the DB-driven MCP tools.
+        Driven entirely from the database: subagent config (description,
+        system_prompt, model) comes from ``subagents``, system tools come
+        from ``subagent_system_tools`` (admin-defined), and MCP tools come
+        from ``agent_subagent_mcps`` (per-link, user-controlled). Only the
+        subagents the user attached to *this* orchestrator are returned.
         """
-        _system_tools: dict[str, list[str]] = {
-            "code-implementer": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(git diff*)", "Bash(python -m py_compile*)"],
-            "code-explorer":    ["Read", "Glob", "Grep"],
-            "test-runner":      ["Bash(pytest*)", "Bash(ruff*)", "Bash(mypy*)", "Bash(python -m py_compile*)"],
-            "manager":          [],
-            "repo-scanner":     ["Read", "Glob", "Grep"],
-        }
-
         user_id: int | None = context.get("user_id")
+        links = getattr(self, "_cached_links", None)
+        if links is None:
+            raise PipelineError(
+                "build_subagents called before execute() loaded the agent.",
+            )
+
         async with db.session_scope() as session:
-            repo = AgentConfigRepository(session)
-            subagents = await repo.list_subagents()
-            connected = await repo._get_connected_providers(user_id) if user_id else set()
+            cfg_repo = AgentConfigRepository(session)
+            connected = (
+                await cfg_repo._get_connected_providers(user_id) if user_id else set()
+            )
 
         result: dict[str, Any] = {}
-        for subagent in subagents:
-            system_tools = _system_tools.get(subagent.name, [])
+        for link in links:
+            subagent = link.subagent
+            system_tool_patterns = [
+                st.system_tool.pattern
+                for st in subagent.system_tools
+                if st.is_active and st.system_tool.is_active
+            ]
             active_mcp_providers = [
-                t.mcp_server.provider_name
-                for t in subagent.tools
-                if t.is_active and t.mcp_server.provider_name in connected
+                m.mcp_server.provider_name
+                for m in link.mcps
+                if m.is_active and m.mcp_server.provider_name in connected
             ]
             mcp_patterns = [f"mcp__{p}__*" for p in active_mcp_providers]
             result[subagent.name] = AgentDefinition(
                 description=subagent.description,
                 prompt=subagent.system_prompt,
-                tools=system_tools + mcp_patterns,
+                tools=system_tool_patterns + mcp_patterns,
                 model=subagent.model,
                 mcpServers=active_mcp_providers or None,
             )

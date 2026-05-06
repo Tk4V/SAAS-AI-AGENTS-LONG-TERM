@@ -1,27 +1,24 @@
-"""Subagents endpoint.
+"""Public subagent catalog.
 
-Lists all DB-configured subagents with their allowed MCP tools.
-Each subagent's system tools (Read, Edit, Bash, etc.) remain hardcoded in the
-agent layer and are not surfaced here — only MCP tool associations are shown.
+Read-only: lists what subagents an end-user can attach to their agents.
+Mutating system-wide subagent state lives under ``/admin/subagents`` —
+this module is intentionally idempotent.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 
 from src.api.dependencies import AgentConfigRepositoryDep, ProviderCatalogDep
-from src.api.schemas.agent_schemas import (
-    SubagentRead,
-    SubagentsList,
-    SubagentToolRead,
-    SubagentToolUpdate,
-)
+from src.api.schemas.agent_schemas import SubagentRead, SubagentToolRead, SubagentsList
 from src.db.models.agent_config import Subagent
 
-router = APIRouter(prefix="/subagents", tags=["subagents"])
+router = APIRouter(prefix="/subagents", tags=["Subagent Catalog"])
 
 
-def _build_subagent_read(subagent: Subagent, provider_meta: dict[str, tuple[str, str]]) -> SubagentRead:
+def _build_subagent_read(
+    subagent: Subagent, provider_meta: dict[str, tuple[str, str]]
+) -> SubagentRead:
     tools = [
         SubagentToolRead(
             tool_name=f"mcp__{t.mcp_server.provider_name}__*",
@@ -32,6 +29,7 @@ def _build_subagent_read(subagent: Subagent, provider_meta: dict[str, tuple[str,
         for t in subagent.tools
     ]
     return SubagentRead(
+        id=subagent.id,
         name=subagent.name,
         display_name=subagent.display_name,
         description=subagent.description,
@@ -43,61 +41,32 @@ def _build_subagent_read(subagent: Subagent, provider_meta: dict[str, tuple[str,
     )
 
 
-class SubagentsView:
-    """Read and manage subagent configurations."""
+class SubagentCatalogView:
+    """Read-only catalog of subagents available to attach to user agents."""
 
     @staticmethod
-    @router.get("", response_model=SubagentsList)
+    @router.get(
+        "",
+        response_model=SubagentsList,
+        summary="List all subagents available to pick from",
+        description=(
+            "Returns the full catalog of subagents that any user can attach "
+            "to one of their agents. Use the returned `id` field as "
+            "`subagent_id` when calling `POST /agents` (in `subagent_ids`) "
+            "or `POST /agents/{agent_id}/subagents/{subagent_id}`.\n\n"
+            "`tools` shows the default MCP integrations a subagent ships "
+            "with — those defaults are copied into your agent at attach time."
+        ),
+    )
     async def list(
         repo: AgentConfigRepositoryDep,
         catalog: ProviderCatalogDep,
     ) -> SubagentsList:
-        """List all active subagents with their allowed MCP tools.
-
-        ``tools`` contains MCP integrations only. System tools (Read, Edit, Bash, etc.)
-        are hardcoded in the agent layer and not returned here.
-        """
         subagents = await repo.list_subagents()
         provider_meta = {
             p.kind.value: (p.display_name, p.category.value)
             for p in catalog.all()
         }
-        return SubagentsList(items=[_build_subagent_read(s, provider_meta) for s in subagents])
-
-    @staticmethod
-    @router.patch("/{name}", response_model=SubagentRead)
-    async def update(
-        name: str,
-        payload: SubagentToolUpdate,
-        repo: AgentConfigRepositoryDep,
-        catalog: ProviderCatalogDep,
-    ) -> SubagentRead:
-        """Enable or disable an MCP tool for a subagent.
-
-        Upserts a row in ``subagent_tools``. The change takes effect on the
-        next orchestrator run — running sessions are not affected.
-        """
-        subagent = await repo.get_subagent_by_name(name)
-        if subagent is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Subagent {name!r} not found.")
-
-        mcp_config = await repo.get_mcp_config_by_provider(payload.mcp_provider)
-        if mcp_config is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"MCP provider {payload.mcp_provider!r} not found or inactive.",
-            )
-
-        await repo.upsert_subagent_tool(
-            subagent_id=subagent.id,
-            mcp_server_config_id=mcp_config.id,
-            is_active=payload.is_active,
+        return SubagentsList(
+            items=[_build_subagent_read(s, provider_meta) for s in subagents]
         )
-
-        # Re-fetch to return up-to-date state
-        subagent = await repo.get_subagent_by_name(name)
-        provider_meta = {
-            p.kind.value: (p.display_name, p.category.value)
-            for p in catalog.all()
-        }
-        return _build_subagent_read(subagent, provider_meta)  # type: ignore[arg-type]

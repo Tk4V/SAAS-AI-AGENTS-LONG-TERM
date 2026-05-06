@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 class TaskCreate(BaseModel):
     project_id: UUID
     description: str = Field(min_length=1, max_length=10_000)
+    # Optional — falls back to the user's default agent server-side.
+    agent_id: UUID | None = None
 
 
 class TaskBase(BaseModel):
@@ -24,6 +26,7 @@ class TaskBase(BaseModel):
 
     id: UUID
     project_id: UUID
+    agent_id: UUID
     description: str
     status: TaskStatus
     attempt: int
@@ -41,6 +44,7 @@ class TaskListItem(TaskBase):
         return cls(
             id=task.id,
             project_id=task.project_id,
+            agent_id=task.agent_id,
             description=task.description,
             status=task.status,
             attempt=task.attempt,
@@ -61,6 +65,7 @@ class TaskRead(TaskBase):
         return cls(
             id=task.id,
             project_id=task.project_id,
+            agent_id=task.agent_id,
             description=task.description,
             status=task.status,
             attempt=task.attempt,

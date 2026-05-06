@@ -19,7 +19,7 @@ from src.api.schemas.project_schemas import (
     ProjectUpdate,
 )
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 class ProjectView:

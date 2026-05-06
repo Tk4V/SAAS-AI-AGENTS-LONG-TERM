@@ -29,6 +29,12 @@ from src.credentials.resolver import CredentialResolver
 from src.credentials.service import CredentialService
 from src.db.models.credential import CredentialKind
 from src.db.queries.agent_config_query import AgentConfigRepository
+from src.db.queries.agent_query import (
+    AgentRepository,
+    MCPServerRepository,
+    SubagentAdminRepository,
+    SystemToolRepository,
+)
 from src.db.queries.credential_event_query import CredentialEventRepository
 from src.db.queries.credential_query import CredentialRepository
 from src.db.queries.project_query import ProjectRepository
@@ -40,11 +46,13 @@ from src.integrations._shared import (
     OAuthStateSigner,
     ProviderCatalog,
 )
+from src.services.agent_service import AgentService
 from src.services.auth_service import AuthService, CurrentUser
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.utils.crypto import TokenCipher
-from src.utils.exceptions import AuthenticationError
+from src.config import get_settings
+from src.utils.exceptions import AuthenticationError, AuthorizationError
 
 bearer_scheme = HTTPBearer(
     bearerFormat="JWT",
@@ -77,6 +85,32 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def _parse_admin_ids(raw: str) -> set[int]:
+    """Parse a comma-separated list of admin user ids from settings."""
+    return {int(part) for part in raw.split(",") if part.strip().isdigit()}
+
+
+async def require_admin(user: CurrentUserDep) -> CurrentUser:
+    """Reject the request unless the caller is an administrator.
+
+    Recognises two signals: an explicit ``is_admin`` claim in the JWT
+    (preferred — once Django adds it) or the user id appearing in the
+    ``admin_user_ids`` settings allowlist (the current stand-in).
+    """
+    claims = user.raw_claims or {}
+    if claims.get("is_admin") is True:
+        return user
+    if user.id in _parse_admin_ids(get_settings().admin_user_ids):
+        return user
+    raise AuthorizationError(
+        "Administrator privileges are required for this endpoint.",
+        details={"required": "is_admin"},
+    )
+
+
+AdminUserDep = Annotated[CurrentUser, Depends(require_admin)]
 
 
 async def get_current_user_ws(websocket: WebSocket) -> CurrentUser:
@@ -314,3 +348,52 @@ def get_agent_config_repository(session: SessionDep) -> AgentConfigRepository:
 AgentConfigRepositoryDep = Annotated[
     AgentConfigRepository, Depends(get_agent_config_repository)
 ]
+
+
+def get_agent_repository(session: SessionDep) -> AgentRepository:
+    return AgentRepository(session)
+
+
+AgentRepositoryDep = Annotated[AgentRepository, Depends(get_agent_repository)]
+
+
+def get_subagent_admin_repository(session: SessionDep) -> SubagentAdminRepository:
+    return SubagentAdminRepository(session)
+
+
+SubagentAdminRepositoryDep = Annotated[
+    SubagentAdminRepository, Depends(get_subagent_admin_repository)
+]
+
+
+def get_system_tool_repository(session: SessionDep) -> SystemToolRepository:
+    return SystemToolRepository(session)
+
+
+SystemToolRepositoryDep = Annotated[
+    SystemToolRepository, Depends(get_system_tool_repository)
+]
+
+
+def get_mcp_server_repository(session: SessionDep) -> MCPServerRepository:
+    return MCPServerRepository(session)
+
+
+MCPServerRepositoryDep = Annotated[
+    MCPServerRepository, Depends(get_mcp_server_repository)
+]
+
+
+def get_agent_service(
+    repo: AgentRepositoryDep,
+    subagent_repo: SubagentAdminRepositoryDep,
+    mcp_repo: MCPServerRepositoryDep,
+) -> AgentService:
+    return AgentService(
+        repository=repo,
+        subagent_admin_repository=subagent_repo,
+        mcp_repository=mcp_repo,
+    )
+
+
+AgentServiceDep = Annotated[AgentService, Depends(get_agent_service)]

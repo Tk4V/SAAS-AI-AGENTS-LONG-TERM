@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
@@ -10,6 +10,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
+if TYPE_CHECKING:
+    from src.db.models.agent import SubagentSystemTool
 
 
 class AgentToolConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -112,6 +115,12 @@ class Subagent(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         back_populates="subagent",
         lazy="selectin",
         cascade="all, delete-orphan",
+    )
+    system_tools: Mapped[list["SubagentSystemTool"]] = relationship(
+        "SubagentSystemTool",
+        primaryjoin="Subagent.id == foreign(SubagentSystemTool.subagent_id)",
+        lazy="selectin",
+        viewonly=True,
     )
 
 

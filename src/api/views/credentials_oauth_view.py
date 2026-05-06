@@ -16,7 +16,7 @@ from src.api.schemas.auth_schemas import OAuthStartResponse
 from src.db.models.project import ProviderKind
 from src.utils.exceptions import AppError
 
-router = APIRouter(prefix="/credentials/oauth", tags=["credentials"])
+router = APIRouter(prefix="/credentials/oauth", tags=["Credentials"])
 
 
 class CredentialOAuthView:

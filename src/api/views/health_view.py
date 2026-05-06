@@ -13,7 +13,7 @@ from sqlalchemy import text
 from src.api.dependencies import SessionDep
 from src.config import get_settings
 
-router = APIRouter(tags=["health"])
+router = APIRouter(tags=["Health"])
 
 
 class HealthView:

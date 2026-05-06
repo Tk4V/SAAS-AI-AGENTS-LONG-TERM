@@ -27,6 +27,7 @@ class TaskRepository:
         *,
         user_id: int,
         project_id: UUID,
+        agent_id: UUID,
         description: str,
         status: TaskStatus = TaskStatus.RUNNING,
     ) -> Task:
@@ -42,6 +43,7 @@ class TaskRepository:
         task = Task(
             user_id=user_id,
             project_id=project_id,
+            agent_id=agent_id,
             description=description,
             status=status,
         )

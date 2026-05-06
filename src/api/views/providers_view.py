@@ -11,7 +11,7 @@ from src.api.schemas.provider_schemas import ProviderRead, ProvidersList
 from src.credentials.catalog.models import AuthMethodKind
 from src.utils.exceptions import NotFoundError
 
-router = APIRouter(prefix="/providers", tags=["providers"])
+router = APIRouter(prefix="/providers", tags=["Providers"])
 
 
 class ProvidersView:

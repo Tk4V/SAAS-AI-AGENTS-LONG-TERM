@@ -27,15 +27,24 @@ class TaskService:
         self._project_repo = project_repository
         self._logger = structlog.get_logger("clyde.service.task")
 
-    async def create(self, *, user_id: int, payload: TaskCreate) -> Task:
-        """Create a task and spawn the pipeline in the background."""
+    async def create(self, *, user_id: int, payload: TaskCreate, agent_id: UUID) -> Task:
+        """Create a task and spawn the pipeline in the background.
+
+        ``agent_id`` is resolved by the view from ``AgentService`` (either
+        the body's explicit value or the user's default agent). It must be
+        a valid agent owned by the user — the FK on ``tasks`` plus the
+        view-level ownership check are the safety net.
+        """
         project = await self._project_repo.get(user_id=user_id, project_id=payload.project_id)
         task = await self._repo.create(
-            user_id=user_id, project_id=payload.project_id, description=payload.description,
+            user_id=user_id,
+            project_id=payload.project_id,
+            agent_id=agent_id,
+            description=payload.description,
         )
         initial_state = self._build_initial_state(task=task, user_id=user_id, project=project)
         asyncio.create_task(self._run_pipeline(task_id=task.id, user_id=user_id, initial_state=initial_state))
-        self._logger.info("task.created", task_id=str(task.id))
+        self._logger.info("task.created", task_id=str(task.id), agent_id=str(agent_id))
         return task
 
     async def get(self, *, user_id: int, task_id: UUID) -> Task:
@@ -78,6 +87,7 @@ class TaskService:
         return {
             "task_id": str(task.id),
             "user_id": user_id,
+            "agent_id": str(task.agent_id),
             "project_id": str(task.project_id),
             "description": task.description,
             "repos": [
