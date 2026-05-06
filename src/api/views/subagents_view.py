@@ -21,6 +21,7 @@ def _build_subagent_read(
 ) -> SubagentRead:
     tools = [
         SubagentToolRead(
+            mcp_server_config_id=t.mcp_server.id,
             tool_name=f"mcp__{t.mcp_server.provider_name}__*",
             display_name=provider_meta.get(t.mcp_server.provider_name, (t.mcp_server.provider_name, ""))[0],
             category=provider_meta.get(t.mcp_server.provider_name, ("", ""))[1],

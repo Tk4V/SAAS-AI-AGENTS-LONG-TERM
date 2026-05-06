@@ -233,9 +233,9 @@ class AgentSubagentMcpsView:
         summary="Enable an MCP integration for this subagent inside this agent",
         description=(
             "Adds an MCP integration to the (agent, subagent) link. The "
-            "`mcp_id` must come from `GET /admin/mcp-servers` — listing "
-            "active MCPs is admin-gated because it exposes server "
-            "configuration that end-users do not need to see directly."
+            "`mcp_id` is the `id` field returned by `GET /tools` (the "
+            "public MCP catalog). `GET /admin/mcp-servers` returns the "
+            "same set with extra admin metadata, but is admin-gated."
         ),
     )
     async def add_mcp(

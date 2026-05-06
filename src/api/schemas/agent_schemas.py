@@ -27,8 +27,13 @@ if TYPE_CHECKING:
 
 
 class ToolRead(BaseModel):
-    """One MCP tool entry shown by the public /tools listing."""
+    """One MCP tool entry shown by the public /tools listing.
 
+    ``id`` is the ``mcp_server_config_id`` end-users pass to
+    ``POST /agents/{agent_id}/subagents/{subagent_id}/mcps/{mcp_id}``.
+    """
+
+    id: UUID
     tool_name: str
     sort_order: int
     display_name: str
@@ -42,10 +47,12 @@ class ToolsList(BaseModel):
 class SubagentToolRead(BaseModel):
     """One MCP tool entry allowed for a subagent (admin defaults).
 
-    Re-used by both the legacy public ``/subagents`` view and the admin
-    detail view, so the shape is intentionally minimal.
+    ``mcp_server_config_id`` is exposed so the UI can correlate the
+    inherited default with the corresponding MCP override the user can
+    add or remove via the **Agent MCPs** endpoints.
     """
 
+    mcp_server_config_id: UUID
     tool_name: str
     display_name: str
     category: str
