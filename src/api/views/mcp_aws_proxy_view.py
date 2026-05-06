@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, Response
 from src.services.aws_mcp_proxy_service import decode_credentials, handle_proxy_request
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["mcp"])
+router = APIRouter(tags=["MCP Proxies"])
 
 
 @router.api_route("/mcp/aws", methods=["GET", "POST", "DELETE"])

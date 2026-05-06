@@ -14,7 +14,7 @@ from src.api.dependencies import SessionDep
 from src.services.webhook_service import WebhookService
 from src.utils.exceptions import AuthenticationError
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
 class WebhookView:

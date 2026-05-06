@@ -28,7 +28,7 @@ from src.api.schemas.credential_schemas import (
 )
 from src.db.models.credential import CredentialKind
 
-router = APIRouter(prefix="/credentials", tags=["credentials"])
+router = APIRouter(prefix="/credentials", tags=["Credentials"])
 
 
 class CredentialView:

@@ -31,10 +31,96 @@ from src.api.views import (
     tools_view,
     webhooks_view,
 )
+from src.api.views.admin import subagents_admin_view
 from src.api.websocket import task_stream_view
 from src.config import Settings, get_settings
 from src.db.session import db
 from src.clients import clients
+
+
+_OPENAPI_TAGS: list[dict[str, str]] = [
+    {
+        "name": "Agents",
+        "description": (
+            "Per-user orchestrator agents. **Workflow:** `GET /subagents` to "
+            "see what is available, then `POST /agents` with one or more "
+            "subagent ids. Listing, editing, and deleting your own agents "
+            "live here too. The first agent you create becomes the default "
+            "automatically."
+        ),
+    },
+    {
+        "name": "Agent Subagents",
+        "description": (
+            "Attach or detach subagents on one of your existing agents. "
+            "Attaching auto-copies the admin's MCP defaults for that "
+            "subagent so it works out of the box."
+        ),
+    },
+    {
+        "name": "Agent MCPs",
+        "description": (
+            "Override the MCP integrations one subagent has inside one of "
+            "your agents. Use these endpoints to enable AWS but disable "
+            "Azure for `cloud-fixer` in your `DevOps` agent, for example."
+        ),
+    },
+    {
+        "name": "Subagent Catalog",
+        "description": (
+            "Read-only browse of every subagent available platform-wide. "
+            "Returns the `id` you need for `POST /agents` and friends."
+        ),
+    },
+    {
+        "name": "Tasks",
+        "description": "Submit work to one of your agents and track its lifecycle.",
+    },
+    {
+        "name": "Projects",
+        "description": "Group repositories under a project so tasks can target them.",
+    },
+    {
+        "name": "Credentials",
+        "description": "OAuth tokens for the integrations your subagents talk to (GitHub, Jira, …).",
+    },
+    {
+        "name": "Tools",
+        "description": "MCP tool catalog used by the existing tools view.",
+    },
+    {
+        "name": "Admin · Subagents",
+        "description": (
+            "Admin-only CRUD over the global subagent catalog. Requires the "
+            "`is_admin` JWT claim or membership in the `ADMIN_USER_IDS` "
+            "settings allowlist."
+        ),
+    },
+    {
+        "name": "Admin · System Tools",
+        "description": "Admin-only listing of built-in SDK tools (Read, Edit, Bash variants, …).",
+    },
+    {
+        "name": "Admin · MCP Servers",
+        "description": "Admin-only listing of MCP server configurations.",
+    },
+    {
+        "name": "Providers",
+        "description": "Public catalog of integration providers shown in the connect flow.",
+    },
+    {
+        "name": "MCP Proxies",
+        "description": "Internal MCP proxy endpoints (AWS auth ping, etc.).",
+    },
+    {
+        "name": "Webhooks",
+        "description": "Incoming webhooks from third parties (GitHub status events).",
+    },
+    {
+        "name": "Health",
+        "description": "Liveness / readiness probes.",
+    },
+]
 
 
 class Application:
@@ -50,6 +136,7 @@ class Application:
             docs_url=f"{self._settings.api_prefix}/docs",
             redoc_url=f"{self._settings.api_prefix}/redoc",
             openapi_url=f"{self._settings.api_prefix}/openapi.json",
+            openapi_tags=_OPENAPI_TAGS,
             lifespan=self._lifespan,
         )
         self._configure_middleware(app)
@@ -99,6 +186,7 @@ class Application:
         app.include_router(providers_view.router, prefix=prefix)
         app.include_router(tools_view.router, prefix=prefix)
         app.include_router(subagents_view.router, prefix=prefix)
+        app.include_router(subagents_admin_view.router, prefix=prefix)
         app.include_router(webhooks_view.router, prefix=prefix)
         app.include_router(mcp_aws_proxy_view.router, prefix=prefix)
 

@@ -64,6 +64,13 @@ class AuthenticationError(AppError):
     http_status = 401
 
 
+class AuthorizationError(AppError):
+    """The caller is authenticated but lacks permission for this action."""
+
+    code = "authorization_error"
+    http_status = 403
+
+
 class ConflictError(AppError):
     """The request conflicts with the current state of the resource."""
 
@@ -83,3 +90,10 @@ class PipelineError(AppError):
 
     code = "pipeline_error"
     http_status = 500
+
+
+class ValidationError(AppError):
+    """The request payload failed a business-rule check the framework can't catch."""
+
+    code = "validation_error"
+    http_status = 422

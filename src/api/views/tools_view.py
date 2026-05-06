@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from src.api.dependencies import AgentConfigRepositoryDep, ProviderCatalogDep
 from src.api.schemas.agent_schemas import ToolRead, ToolsList
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+router = APIRouter(prefix="/tools", tags=["Tools"])
 
 
 class ToolsView:

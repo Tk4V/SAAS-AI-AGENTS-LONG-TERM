@@ -7,12 +7,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from src.api.dependencies import CurrentUserDep, TaskServiceDep
+from src.api.dependencies import AgentServiceDep, CurrentUserDep, TaskServiceDep
 from src.api.schemas.common_schemas import Page, PaginationParams
 from src.api.schemas.task_schemas import TaskCreate, TaskListItem, TaskRead
 from src.db.models.task import TaskStatus
 
-router = APIRouter(prefix="/tasks", tags=["tasks"])
+router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
 class TaskView:
@@ -24,9 +24,19 @@ class TaskView:
         payload: TaskCreate,
         user: CurrentUserDep,
         service: TaskServiceDep,
+        agent_service: AgentServiceDep,
     ) -> TaskRead:
-        """Create a new task and start the pipeline in the background."""
-        task = await service.create(user_id=user.id, payload=payload)
+        """Create a new task and start the pipeline in the background.
+
+        Resolves which orchestrator agent to use: the body's ``agent_id``
+        if provided, otherwise the user's default. ``ValidationError`` is
+        raised by ``AgentService`` when the user has no agent yet, so the
+        framework's exception mapping turns it into a 422.
+        """
+        agent = await agent_service.resolve_agent_for_task(
+            user_id=user.id, agent_id=payload.agent_id,
+        )
+        task = await service.create(user_id=user.id, payload=payload, agent_id=agent.id)
         return TaskRead.from_orm(task)
 
     @staticmethod

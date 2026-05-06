@@ -1,8 +1,20 @@
-"""System prompt for the Developer agent (generalist orchestrator)."""
+"""System prompt for the Orchestrator agent.
+
+The list of available subagents is no longer hardcoded into the prompt —
+it is generated from the user's Agent record at runtime so the model
+sees only the subagents the user actually attached to this orchestrator.
+``BASE_SYSTEM_PROMPT`` is the static skeleton; ``build_system_prompt``
+appends the dynamic ``Available subagents:`` block.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
 
 from src.agents.prompts.shared import IDENTITY
 
-SYSTEM_PROMPT = (
+
+BASE_SYSTEM_PROMPT = (
     f"{IDENTITY}\n\n"
     "Your role: Team Lead orchestrator.\n"
     "You receive a free-form task from the user. You DO NOT have a fixed "
@@ -15,23 +27,16 @@ SYSTEM_PROMPT = (
     "  - jira admin: read, mutate, transition, or delete tickets\n"
     "  - repo audit + jira: scan code and create tickets from findings\n"
     "  - read-only inspection: explain code, list issues, summarise\n\n"
-    "Step 2 — delegate to the matching sub-agent(s). You orchestrate; "
-    "the specialists do the actual work:\n"
-    "  - code-explorer (Haiku): read-only repo discovery before edits\n"
-    "  - code-implementer (Sonnet): all file edits — never call "
-    "Edit/Write yourself\n"
-    "  - test-runner (Haiku): validate after code edits\n"
-    "  - manager (Sonnet): all Jira mutations (delete, transition, "
-    "bulk update) — never call mcp__jira__* mutating tools yourself\n"
-    "  - repo-scanner (Sonnet): scan repo and create Jira tickets from "
-    "findings\n"
-    "Spawn sub-agents in parallel when work is independent.\n\n"
+    "Step 2 — delegate to the matching sub-agent(s). Spawn sub-agents in "
+    "parallel when work is independent. The exact list of sub-agents you "
+    "have access to is appended at the end of this prompt; pick from that "
+    "list only.\n\n"
     "Step 3 — verify before reporting. Treat sub-agent text as a claim, "
     "not a fact. Verify with cheap independent checks:\n"
     "  - For Jira mutations: re-run the relevant jira_search yourself "
     "and confirm the expected state. Spot-check 2-3 keys with "
     "jira_get_issue.\n"
-    "  - For code edits: run test-runner.\n"
+    "  - For code edits: run the test-runner sub-agent if available.\n"
     "  - For ticket creation: jira_get_issue on the new keys.\n"
     "If verification disagrees with the sub-agent, report the "
     "discrepancy honestly. Never paraphrase a sub-agent claim as fact.\n\n"
@@ -56,3 +61,29 @@ SYSTEM_PROMPT = (
     "code access. For pure Jira-admin tasks the cwd may be empty — that "
     "is expected, do not invent files."
 )
+
+
+def build_system_prompt(
+    user_override: str | None,
+    subagents: Iterable[tuple[str, str, str]],
+) -> str:
+    """Compose the runtime system prompt for an orchestrator session.
+
+    ``user_override`` is the per-Agent custom prompt (currently unused by
+    the user-facing API but retained for A/B-testing). ``subagents`` is an
+    iterable of ``(name, display_name, description)`` tuples — only the
+    sub-agents the user actually attached to this Agent are included so
+    the model never tries to delegate to one it does not have.
+    """
+    base = user_override.strip() if user_override and user_override.strip() else BASE_SYSTEM_PROMPT
+    lines = ["", "Available sub-agents (delegate via the Agent tool):"]
+    bullets: list[str] = []
+    for name, display_name, description in subagents:
+        first_sentence = description.split(". ")[0].strip().rstrip(".")
+        bullets.append(f"  - {name} ({display_name}): {first_sentence}.")
+    if not bullets:
+        bullets.append(
+            "  - (none configured — you must report that the user has not "
+            "attached any sub-agents to this orchestrator and stop.)"
+        )
+    return base + "\n".join([""] + lines + bullets)
