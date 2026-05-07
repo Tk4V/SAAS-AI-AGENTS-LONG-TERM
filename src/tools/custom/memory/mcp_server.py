@@ -9,7 +9,7 @@ module-level state.
 
 Usage in ``build_mcp_servers``::
 
-    from src.memory.mcp_server import create_memory_mcp_server
+    from src.tools.custom.memory.mcp_server import create_memory_mcp_server
 
     servers["memory"] = create_memory_mcp_server(
         user_id=user_id,
@@ -23,7 +23,7 @@ from typing import Any
 
 from claude_agent_sdk import McpSdkServerConfig, SdkMcpTool, create_sdk_mcp_server
 
-from src.memory.retrieval import MemoryRetrieval
+from src.tools.custom.memory.retrieval import MemoryRetrieval
 
 
 def create_memory_mcp_server(

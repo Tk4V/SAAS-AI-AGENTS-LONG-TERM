@@ -28,7 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.db.models.memory_graph import MemoryEdge, MemoryNode
 from src.db.session import db
-from src.memory.entity_extractor import ExtractedEntity, extract_entities
+from src.tools.custom.memory.entity_extractor import ExtractedEntity, extract_entities
 
 _log = logging.getLogger(__name__)
 
