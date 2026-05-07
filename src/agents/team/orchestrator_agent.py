@@ -19,6 +19,9 @@ from uuid import UUID
 
 from claude_agent_sdk import AgentDefinition
 
+from src.memory.graph_writer import GraphWriter
+from src.memory.mcp_server import create_memory_mcp_server
+
 from src.agents.prompts.team.orchestrator_prompts import (
     BASE_SYSTEM_PROMPT as _ORCHESTRATOR_BASE_PROMPT,
     build_system_prompt as _build_orchestrator_prompt,
@@ -49,6 +52,7 @@ class OrchestratorAgent(SDKAgent):
     SYSTEM_TOOLS: ClassVar[list[str]] = [
         "Read", "Edit", "Write", "Glob", "Grep",
         "Bash(git diff*)", "Bash(python -m py_compile*)", "Agent",
+        "mcp__memory__*",
     ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +92,16 @@ class OrchestratorAgent(SDKAgent):
         self._agent_id = agent_id  # kept for diagnostics / future re-load
         self._cached_links = links  # picked up by build_subagents
 
+        # ── memory graph ──────────────────────────────────────────────────────
+        graph_writer = GraphWriter()
+        task_node_id = await graph_writer.create_task_node(
+            task_id=task_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            description=description,
+            attempt=state.get("attempt", 0),
+        )
+
         workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id}_"))
         cloned_repos: list[dict[str, Any]] = []
         primary_repo_path = workspace_path
@@ -114,7 +128,8 @@ class OrchestratorAgent(SDKAgent):
             session_summary = await self.run_sdk_session(
                 prompt=description,
                 working_directory=primary_repo_path,
-                mcp_context={"user_id": user_id},
+                mcp_context={"user_id": user_id, "task_node_id": task_node_id},
+                graph_context={"task_node_id": task_node_id, "graph_writer": graph_writer},
             )
 
             file_changes: dict[str, list[dict[str, str]]] = {}
@@ -126,6 +141,7 @@ class OrchestratorAgent(SDKAgent):
 
             changed_file_count = sum(len(v) for v in file_changes.values())
             self.logger.info("orchestrator.session_completed", files_changed=changed_file_count)
+            await graph_writer.finish_task(task_node_id=task_node_id, status="completed")
 
             return {
                 "repos": cloned_repos,
@@ -139,12 +155,20 @@ class OrchestratorAgent(SDKAgent):
                 }],
             }
         except Exception:
+            await graph_writer.finish_task(task_node_id=task_node_id, status="failed")
             shutil.rmtree(workspace_path, ignore_errors=True)
             raise
 
     async def build_mcp_servers(self, context: dict[str, Any]) -> dict[str, Any]:
         """Mount MCP servers for all integrations the user has connected."""
-        return await self.build_user_mcp_servers(user_id=context["user_id"])
+        user_id: int = context["user_id"]
+        task_node_id: int | None = context.get("task_node_id")
+        servers = await self.build_user_mcp_servers(user_id=user_id)
+        servers["memory"] = create_memory_mcp_server(
+            user_id=user_id,
+            task_node_id=task_node_id,
+        )
+        return servers
 
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the orchestrator delegates to.

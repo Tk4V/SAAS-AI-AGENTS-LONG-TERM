@@ -5,13 +5,14 @@ Persists task nodes, action nodes, entity nodes, and typed edges into the
 
 Design constraints
 ------------------
+* Every public method opens and commits its own short-lived DB session so
+  that partial progress is preserved even when a task fails mid-run. A
+  long-lived session for the duration of a multi-hour SDK session would
+  hold a transaction open indefinitely.
 * Every public method is failure-isolated: exceptions are caught, logged,
   and swallowed. A graph write failure must never affect task execution.
-* Methods return ``None`` on failure so callers can skip dependent work
+* Methods return ``None`` on failure so callers can skip dependent writes
   (e.g. skip edge creation if action node creation failed).
-* Session management is the caller's responsibility — GraphWriter only
-  calls ``flush()`` (never ``commit()``), matching the repository convention
-  in ``src/db/queries/``.
 """
 
 from __future__ import annotations
@@ -24,9 +25,9 @@ from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.memory_graph import MemoryEdge, MemoryNode
+from src.db.session import db
 from src.memory.entity_extractor import ExtractedEntity, extract_entities
 
 _log = logging.getLogger(__name__)
@@ -35,8 +36,7 @@ _log = logging.getLogger(__name__)
 class GraphWriter:
     """Write agent activity into the memory graph in real time."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    # ── task lifecycle ────────────────────────────────────────────────────────
 
     async def create_task_node(
         self,
@@ -49,96 +49,45 @@ class GraphWriter:
     ) -> int | None:
         """Create a task node at the start of execution. Returns the node id."""
         try:
-            node = MemoryNode(
-                node_type="task",
-                properties={
-                    "task_id": str(task_id),
-                    "user_id": user_id,
-                    "agent_id": str(agent_id),
-                    "description": description,
-                    "status": "running",
-                    "attempt": attempt,
-                },
-            )
-            self._session.add(node)
-            await self._session.flush()
-            return node.id
+            async with db.session_scope() as session:
+                node = MemoryNode(
+                    node_type="task",
+                    properties={
+                        "task_id": str(task_id),
+                        "user_id": user_id,
+                        "agent_id": str(agent_id),
+                        "description": description,
+                        "status": "running",
+                        "attempt": attempt,
+                    },
+                )
+                session.add(node)
+                await session.flush()
+                return node.id
         except Exception:
             _log.warning("graph_writer.create_task_node.failed", exc_info=True)
             return None
 
-    async def finish_task(self, *, task_node_id: int, status: str) -> None:
+    async def finish_task(self, *, task_node_id: int | None, status: str) -> None:
         """Update a task node's status and completed_at timestamp."""
+        if task_node_id is None:
+            return
         try:
             patch = json.dumps({"status": status, "completed_at": _utcnow()})
-            await self._session.execute(
-                sa.text(
-                    "UPDATE memory_nodes "
-                    "SET properties = properties || :patch ::jsonb, "
-                    "    updated_at  = now() "
-                    "WHERE id = :node_id"
-                ),
-                {"patch": patch, "node_id": task_node_id},
-            )
+            async with db.session_scope() as session:
+                await session.execute(
+                    sa.text(
+                        "UPDATE memory_nodes "
+                        "SET properties = properties || :patch ::jsonb, "
+                        "    updated_at  = now() "
+                        "WHERE id = :node_id"
+                    ),
+                    {"patch": patch, "node_id": task_node_id},
+                )
         except Exception:
             _log.warning("graph_writer.finish_task.failed", exc_info=True)
 
-    async def create_action_node(
-        self,
-        *,
-        task_node_id: int,
-        tool_name: str,
-        tool_use_id: str,
-        turn: int,
-        detail: str,
-    ) -> int | None:
-        """Create an action node and wire it to the task with an 'executed' edge."""
-        try:
-            node = MemoryNode(
-                node_type="action",
-                properties={
-                    "tool_name": tool_name,
-                    "tool_use_id": tool_use_id,
-                    "turn": turn,
-                    "detail": detail,
-                    "outcome": None,
-                    "is_error": None,
-                },
-            )
-            self._session.add(node)
-            await self._session.flush()
-            await self.create_edge(
-                source_id=task_node_id,
-                target_id=node.id,
-                edge_type="executed",
-            )
-            return node.id
-        except Exception:
-            _log.warning("graph_writer.create_action_node.failed", exc_info=True)
-            return None
-
-    async def patch_action_outcome(
-        self,
-        *,
-        tool_use_id: str,
-        is_error: bool,
-    ) -> None:
-        """Patch outcome and is_error onto an action node after the tool returns."""
-        try:
-            outcome = "error" if is_error else "success"
-            patch = json.dumps({"outcome": outcome, "is_error": is_error})
-            await self._session.execute(
-                sa.text(
-                    "UPDATE memory_nodes "
-                    "SET properties = properties || :patch ::jsonb, "
-                    "    updated_at  = now() "
-                    "WHERE node_type = 'action' "
-                    "  AND properties->>'tool_use_id' = :tool_use_id"
-                ),
-                {"patch": patch, "tool_use_id": tool_use_id},
-            )
-        except Exception:
-            _log.warning("graph_writer.patch_action_outcome.failed", exc_info=True)
+    # ── tool call recording ───────────────────────────────────────────────────
 
     async def record_tool_call(
         self,
@@ -152,10 +101,10 @@ class GraphWriter:
     ) -> int | None:
         """Create action node + entity nodes + edges in a single call.
 
-        This is the primary write method called from ``_log_assistant_message``.
+        Primary write method called from ``_log_assistant_message``.
         Returns the action node id, or None if creation failed.
         """
-        action_id = await self.create_action_node(
+        action_id = await self._create_action_node(
             task_node_id=task_node_id,
             tool_name=tool_name,
             tool_use_id=tool_use_id,
@@ -165,14 +114,10 @@ class GraphWriter:
         if action_id is None:
             return None
 
-        entities: list[ExtractedEntity] = extract_entities(tool_name, tool_input)
-        for entity in entities:
-            entity_id = await self.upsert_entity(
-                kind=entity.kind,
-                identifier=entity.identifier,
-            )
+        for entity in extract_entities(tool_name, tool_input):
+            entity_id = await self.upsert_entity(kind=entity.kind, identifier=entity.identifier)
             if entity_id is not None:
-                await self.create_edge(
+                await self._create_edge(
                     source_id=action_id,
                     target_id=entity_id,
                     edge_type=entity.edge_type,
@@ -180,48 +125,115 @@ class GraphWriter:
 
         return action_id
 
+    async def patch_action_outcome(self, *, tool_use_id: str, is_error: bool) -> None:
+        """Patch outcome and is_error onto an action node after the tool returns."""
+        try:
+            outcome = "error" if is_error else "success"
+            patch = json.dumps({"outcome": outcome, "is_error": is_error})
+            async with db.session_scope() as session:
+                await session.execute(
+                    sa.text(
+                        "UPDATE memory_nodes "
+                        "SET properties = properties || :patch ::jsonb, "
+                        "    updated_at  = now() "
+                        "WHERE node_type = 'action' "
+                        "  AND properties->>'tool_use_id' = :tool_use_id"
+                    ),
+                    {"patch": patch, "tool_use_id": tool_use_id},
+                )
+        except Exception:
+            _log.warning("graph_writer.patch_action_outcome.failed", exc_info=True)
+
     async def upsert_entity(self, *, kind: str, identifier: str) -> int | None:
         """Find or create an entity node. Returns the node id.
 
-        Uses INSERT ... ON CONFLICT DO NOTHING against the partial unique index
-        ``idx_memory_nodes_entity_identity`` on (kind, identifier) WHERE
-        node_type = 'entity'. Falls back to a SELECT when the row already exists
-        (ON CONFLICT DO NOTHING returns no rows).
+        Targets the partial functional unique index
+        ``idx_memory_nodes_entity_identity`` on (kind, identifier)
+        WHERE node_type = 'entity' via raw SQL so the ON CONFLICT clause
+        references the exact index expression.
         """
         try:
-            stmt = (
-                insert(MemoryNode)
-                .values(
-                    node_type="entity",
-                    properties={"kind": kind, "identifier": identifier},
+            async with db.session_scope() as session:
+                result = await session.execute(
+                    sa.text("""
+                        INSERT INTO memory_nodes (node_type, properties, created_at, updated_at)
+                        VALUES (
+                            'entity',
+                            jsonb_build_object('kind', :kind, 'identifier', :identifier),
+                            now(), now()
+                        )
+                        ON CONFLICT ((properties->>'kind'), (properties->>'identifier'))
+                        WHERE node_type = 'entity'
+                        DO NOTHING
+                        RETURNING id
+                    """),
+                    {"kind": kind, "identifier": identifier},
                 )
-                .on_conflict_do_nothing(
-                    index_elements=None,
-                    index_where=None,
-                )
-                .returning(MemoryNode.id)
-            )
-            result = (await self._session.execute(stmt)).scalar_one_or_none()
+                row = result.fetchone()
+                if row:
+                    return row[0]
 
-            if result is not None:
-                return result
-
-            # Row already existed — fetch its id.
-            existing = (
-                await self._session.execute(
-                    sa.select(MemoryNode.id).where(
-                        MemoryNode.node_type == "entity",
-                        sa.cast(MemoryNode.properties["kind"], sa.Text) == kind,
-                        sa.cast(MemoryNode.properties["identifier"], sa.Text) == identifier,
-                    )
+                # Row already existed — fetch its id.
+                existing = await session.execute(
+                    sa.text("""
+                        SELECT id FROM memory_nodes
+                        WHERE node_type = 'entity'
+                          AND properties->>'kind'       = :kind
+                          AND properties->>'identifier' = :identifier
+                    """),
+                    {"kind": kind, "identifier": identifier},
                 )
-            ).scalar_one_or_none()
-            return existing
+                row = existing.fetchone()
+                return row[0] if row else None
         except Exception:
             _log.warning("graph_writer.upsert_entity.failed", exc_info=True)
             return None
 
-    async def create_edge(
+    # ── private helpers ───────────────────────────────────────────────────────
+
+    async def _create_action_node(
+        self,
+        *,
+        task_node_id: int,
+        tool_name: str,
+        tool_use_id: str,
+        turn: int,
+        detail: str,
+    ) -> int | None:
+        try:
+            async with db.session_scope() as session:
+                node = MemoryNode(
+                    node_type="action",
+                    properties={
+                        "tool_name": tool_name,
+                        "tool_use_id": tool_use_id,
+                        "turn": turn,
+                        "detail": detail,
+                        "outcome": None,
+                        "is_error": None,
+                    },
+                )
+                session.add(node)
+                await session.flush()
+                action_id = node.id
+
+                await session.execute(
+                    insert(MemoryEdge).values(
+                        source_id=task_node_id,
+                        target_id=action_id,
+                        edge_type="executed",
+                        weight=1.0,
+                    ).on_conflict_do_update(
+                        constraint="uq_memory_edges_source_target_type",
+                        set_={"weight": MemoryEdge.weight + 1.0},
+                    )
+                )
+                return action_id
+        except Exception:
+            _log.warning("graph_writer.create_action_node.failed", exc_info=True)
+            return None
+
+    async def _create_edge(
         self,
         *,
         source_id: int,
@@ -229,22 +241,19 @@ class GraphWriter:
         edge_type: str,
         weight: float = 1.0,
     ) -> None:
-        """Insert an edge, incrementing weight if it already exists."""
         try:
-            stmt = (
-                insert(MemoryEdge)
-                .values(
-                    source_id=source_id,
-                    target_id=target_id,
-                    edge_type=edge_type,
-                    weight=weight,
+            async with db.session_scope() as session:
+                await session.execute(
+                    insert(MemoryEdge).values(
+                        source_id=source_id,
+                        target_id=target_id,
+                        edge_type=edge_type,
+                        weight=weight,
+                    ).on_conflict_do_update(
+                        constraint="uq_memory_edges_source_target_type",
+                        set_={"weight": MemoryEdge.weight + weight},
+                    )
                 )
-                .on_conflict_do_update(
-                    constraint="uq_memory_edges_source_target_type",
-                    set_={"weight": MemoryEdge.weight + weight},
-                )
-            )
-            await self._session.execute(stmt)
         except Exception:
             _log.warning("graph_writer.create_edge.failed", exc_info=True)
 
