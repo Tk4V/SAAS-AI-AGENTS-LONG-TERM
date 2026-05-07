@@ -19,8 +19,8 @@ from uuid import UUID
 
 from claude_agent_sdk import AgentDefinition
 
-from src.tools.custom.memory.graph_writer import GraphWriter
-from src.tools.custom.memory.mcp_server import create_memory_mcp_server
+from src.agent_tools.custom_tools.memory.graph_writer import GraphWriter
+from src.agent_tools.custom_tools.memory.mcp_server import create_memory_mcp_server
 
 from src.agents.prompts.team.orchestrator_prompts import (
     BASE_SYSTEM_PROMPT as _ORCHESTRATOR_BASE_PROMPT,

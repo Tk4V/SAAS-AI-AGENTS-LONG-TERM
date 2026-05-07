@@ -287,7 +287,7 @@ async def count_memory_rows(task_id: str) -> tuple[int, int, int]:
 
 async def run_tests(github_token: str) -> int:
     from src.agents.team.orchestrator_agent import OrchestratorAgent
-    from src.tools.custom.memory.retrieval import MemoryRetrieval
+    from src.agent_tools.custom_tools.memory.retrieval import MemoryRetrieval
 
     # ── Phase 0: seed ─────────────────────────────────────────────────────────
     _Log.section("Phase 0 — Seed DB")
