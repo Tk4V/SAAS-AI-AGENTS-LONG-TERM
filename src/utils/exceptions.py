@@ -85,6 +85,15 @@ class ExternalServiceError(AppError):
     http_status = 502
 
 
+class WebhookRetryLater(AppError):
+    """Webhook arrived while the underlying task is not in a state we can act
+    on (typically the initial pipeline is still running). Returning 503 asks
+    the sender (GitHub) to retry the delivery after a short backoff."""
+
+    code = "webhook_retry_later"
+    http_status = 503
+
+
 class PipelineError(AppError):
     """An error happened during pipeline execution and was not recoverable."""
 

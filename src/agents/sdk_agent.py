@@ -177,6 +177,11 @@ class SDKAgent(BaseAgent):
 
         context = mcp_context or {}
         mcp_servers = await self.build_mcp_servers(context)
+        in_process_servers = await self.build_in_process_mcp_servers(
+            user_id=context.get("user_id"),
+        )
+        if in_process_servers:
+            mcp_servers = {**mcp_servers, **in_process_servers}
         subagents = await self.build_subagents(context)
 
         allowed_tools = await self._load_allowed_tools(user_id=context.get("user_id"))
