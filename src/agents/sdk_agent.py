@@ -148,6 +148,7 @@ class SDKAgent(BaseAgent):
         working_directory: Path,
         mcp_context: dict[str, Any] | None = None,
         extra_allowed_tools: list[str] | None = None,
+        graph_context: dict[str, Any] | None = None,
     ) -> str:
         """Drive a full Claude Agent SDK session and return its final result text.
 
@@ -166,6 +167,10 @@ class SDKAgent(BaseAgent):
             extra_allowed_tools: One-off additions to ``SDK_ALLOWED_TOOLS``
                 for this single session, e.g. when a caller wants to grant
                 a temporary tool without changing the class declaration.
+            graph_context: Optional memory-graph context. When provided must
+                contain ``task_node_id`` (int) and ``graph_writer``
+                (GraphWriter). Both are forwarded to the logging helpers so
+                every tool call and result is recorded in real time.
         """
         from claude_agent_sdk import (
             AssistantMessage,
@@ -176,6 +181,9 @@ class SDKAgent(BaseAgent):
         )
 
         context = mcp_context or {}
+        graph_writer = (graph_context or {}).get("graph_writer")
+        task_node_id = (graph_context or {}).get("task_node_id")
+
         mcp_servers = await self.build_mcp_servers(context)
         in_process_servers = await self.build_in_process_mcp_servers(
             user_id=context.get("user_id"),
@@ -218,10 +226,17 @@ class SDKAgent(BaseAgent):
             ):
                 if isinstance(message, AssistantMessage):
                     turn_count += 1
-                    self._log_assistant_message(message, turn_count)
+                    await self._log_assistant_message(
+                        message, turn_count,
+                        graph_writer=graph_writer,
+                        task_node_id=task_node_id,
+                    )
 
                 elif isinstance(message, UserMessage):
-                    self._log_tool_results(message, turn_count)
+                    await self._log_tool_results(
+                        message, turn_count,
+                        graph_writer=graph_writer,
+                    )
 
                 elif isinstance(message, ResultMessage):
                     result_text = getattr(message, "result", "") or ""
@@ -249,12 +264,22 @@ class SDKAgent(BaseAgent):
 
         return result_text
 
-    def _log_assistant_message(self, message: Any, turn: int) -> None:
+    async def _log_assistant_message(
+        self,
+        message: Any,
+        turn: int,
+        *,
+        graph_writer: Any | None = None,
+        task_node_id: int | None = None,
+    ) -> None:
         """Log text output and tool calls from an assistant turn.
 
         AssistantMessage.content is a list of ContentBlock (TextBlock,
         ThinkingBlock, ToolUseBlock, ...). We branch on attributes to stay
         forward-compatible with new block types.
+
+        When ``graph_writer`` and ``task_node_id`` are provided, each tool
+        call is also recorded into the memory graph in real time.
         """
         parent_tool_use_id = getattr(message, "parent_tool_use_id", None)
         for block in getattr(message, "content", []) or []:
@@ -268,20 +293,40 @@ class SDKAgent(BaseAgent):
             elif hasattr(block, "name") and hasattr(block, "input"):
                 tool_name = getattr(block, "name", "unknown")
                 tool_input = getattr(block, "input", {}) or {}
+                tool_use_id = getattr(block, "id", None)
+                detail = self._summarize_tool_call(tool_name, tool_input)
                 self._logger.info(
                     "tool_call",
                     turn=turn,
                     parent_tool_use_id=parent_tool_use_id,
                     tool=tool_name,
-                    tool_use_id=getattr(block, "id", None),
-                    detail=self._summarize_tool_call(tool_name, tool_input),
+                    tool_use_id=tool_use_id,
+                    detail=detail,
                 )
+                if graph_writer is not None and task_node_id is not None and tool_use_id:
+                    await graph_writer.record_tool_call(
+                        task_node_id=task_node_id,
+                        tool_name=tool_name,
+                        tool_use_id=tool_use_id,
+                        turn=turn,
+                        detail=detail,
+                        tool_input=tool_input,
+                    )
 
-    def _log_tool_results(self, message: Any, turn: int) -> None:
+    async def _log_tool_results(
+        self,
+        message: Any,
+        turn: int,
+        *,
+        graph_writer: Any | None = None,
+    ) -> None:
         """Log tool execution results returned to the SDK.
 
         UserMessage.content may be a string (initial prompt) or a list of
         ContentBlock — only ToolResultBlock entries are interesting here.
+
+        When ``graph_writer`` is provided, each result patches the matching
+        action node with its outcome and error status.
         """
         parent_tool_use_id = getattr(message, "parent_tool_use_id", None)
         content = getattr(message, "content", None)
@@ -293,15 +338,21 @@ class SDKAgent(BaseAgent):
             raw = getattr(block, "content", "")
             text = raw if isinstance(raw, str) else str(raw)
             is_error = bool(getattr(block, "is_error", False))
+            tool_use_id = getattr(block, "tool_use_id", None)
             self._logger.info(
                 "tool_result",
                 turn=turn,
                 parent_tool_use_id=parent_tool_use_id,
                 is_error=is_error,
                 result_length=len(text),
-                tool_use_id=getattr(block, "tool_use_id", None),
+                tool_use_id=tool_use_id,
                 content=text[:5000] if is_error else text[:5000],
             )
+            if graph_writer is not None and tool_use_id:
+                await graph_writer.patch_action_outcome(
+                    tool_use_id=tool_use_id,
+                    is_error=is_error,
+                )
 
     @staticmethod
     def _summarize_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:

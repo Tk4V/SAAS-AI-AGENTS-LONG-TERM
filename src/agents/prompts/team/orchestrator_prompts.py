@@ -70,7 +70,10 @@ BASE_SYSTEM_PROMPT = (
     "explicitly, and proceed.\n\n"
     "Working directory note: a repo is cloned only when the task needs "
     "code access. For pure Jira-admin tasks the cwd may be empty — that "
-    "is expected, do not invent files."
+    "is expected, do not invent files.\n\n"
+    "Memory: before starting work, call memory_recall with the task "
+    "description to check for relevant context from prior tasks — files "
+    "previously touched, tools used, and outcomes."
 )
 
 
