@@ -145,35 +145,9 @@ class GraphWriter:
             _log.warning("graph_writer.patch_action_outcome.failed", exc_info=True)
 
     async def upsert_entity(self, *, kind: str, identifier: str) -> int | None:
-        """Find or create an entity node. Returns the node id.
-
-        Targets the partial functional unique index
-        ``idx_memory_nodes_entity_identity`` on (kind, identifier)
-        WHERE node_type = 'entity' via raw SQL so the ON CONFLICT clause
-        references the exact index expression.
-        """
+        """Find or create an entity node. Returns the node id."""
         try:
             async with db.session_scope() as session:
-                result = await session.execute(
-                    sa.text("""
-                        INSERT INTO memory_nodes (node_type, properties, created_at, updated_at)
-                        VALUES (
-                            'entity',
-                            jsonb_build_object('kind', :kind, 'identifier', :identifier),
-                            now(), now()
-                        )
-                        ON CONFLICT ((properties->>'kind'), (properties->>'identifier'))
-                        WHERE node_type = 'entity'
-                        DO NOTHING
-                        RETURNING id
-                    """),
-                    {"kind": kind, "identifier": identifier},
-                )
-                row = result.fetchone()
-                if row:
-                    return row[0]
-
-                # Row already existed — fetch its id.
                 existing = await session.execute(
                     sa.text("""
                         SELECT id FROM memory_nodes
@@ -184,6 +158,25 @@ class GraphWriter:
                     {"kind": kind, "identifier": identifier},
                 )
                 row = existing.fetchone()
+                if row:
+                    return row[0]
+
+                result = await session.execute(
+                    sa.text("""
+                        INSERT INTO memory_nodes (node_type, properties, created_at, updated_at)
+                        VALUES (
+                            'entity',
+                            jsonb_build_object(
+                                'kind',       CAST(:kind AS TEXT),
+                                'identifier', CAST(:identifier AS TEXT)
+                            ),
+                            now(), now()
+                        )
+                        RETURNING id
+                    """),
+                    {"kind": kind, "identifier": identifier},
+                )
+                row = result.fetchone()
                 return row[0] if row else None
         except Exception:
             _log.warning("graph_writer.upsert_entity.failed", exc_info=True)
