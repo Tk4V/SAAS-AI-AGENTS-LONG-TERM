@@ -7,14 +7,17 @@ body) and passes it to the service.
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from src.api.dependencies import SessionDep
 from src.services.webhook_service import WebhookService
-from src.utils.exceptions import AuthenticationError
+from src.utils.exceptions import AuthenticationError, WebhookRetryLater
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+
+_logger = structlog.get_logger("clyde.webhook")
 
 
 class WebhookView:
@@ -43,7 +46,19 @@ class WebhookView:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"status": "error", "detail": str(exc)},
             )
-        except Exception:
+        except WebhookRetryLater as exc:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "retry_later", "detail": str(exc)},
+                headers={"Retry-After": "30"},
+            )
+        except Exception as exc:
+            _logger.exception(
+                "webhook.invalid_payload",
+                event_type=event_type,
+                error=str(exc),
+                body_preview=raw_body[:500].decode(errors="replace"),
+            )
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"status": "error", "detail": "invalid payload"},

@@ -140,6 +140,19 @@ class BaseAgent(ABC):
             user_id=user_id, provider=ProviderKind.GITHUB
         )
 
+    async def build_in_process_mcp_servers(
+        self, user_id: int | None
+    ) -> dict[str, Any]:
+        """Return additional MCP servers that run inside the Python process.
+
+        Default returns ``{}``. Subclasses override to register skills
+        (custom in-process MCP servers from ``agent_tools.custom_tools``)
+        on top of the DB-driven remote MCPs from
+        ``build_user_mcp_servers``. ``run_sdk_session`` merges both
+        before handing the union to ``ClaudeAgentOptions``.
+        """
+        return {}
+
     async def build_user_mcp_servers(self, *, user_id: int) -> dict[str, Any]:
         """Mount MCP servers for every integration the user has connected.
 

@@ -21,7 +21,10 @@ from claude_agent_sdk import AgentDefinition
 
 from src.agent_tools.custom_tools.memory.graph_writer import GraphWriter
 from src.agent_tools.custom_tools.memory.mcp_server import create_memory_mcp_server
-
+from src.agent_tools.custom_tools.github import (
+    CLYDE_GITHUB_SERVER_NAME,
+    build_github_skills_server,
+)
 from src.agents.prompts.team.orchestrator_prompts import (
     BASE_SYSTEM_PROMPT as _ORCHESTRATOR_BASE_PROMPT,
     build_system_prompt as _build_orchestrator_prompt,
@@ -170,6 +173,27 @@ class OrchestratorAgent(SDKAgent):
         )
         return servers
 
+    async def build_in_process_mcp_servers(
+        self, user_id: int | None
+    ) -> dict[str, Any]:
+        """Add Clyde's in-process skill servers (e.g. ``clyde_github``).
+
+        Only registers ``clyde_github`` when the user has a GitHub OAuth
+        credential — the skill plugs gaps the upstream Copilot MCP does
+        not cover (e.g. Actions log retrieval) and needs the same token.
+        """
+        if user_id is None:
+            return {}
+        try:
+            github_token = await self.resolve_github_token(user_id=user_id)
+        except Exception:
+            return {}
+        return {
+            CLYDE_GITHUB_SERVER_NAME: build_github_skills_server(
+                github_token=github_token,
+            ),
+        }
+
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:
         """Specialised sub-agents the orchestrator delegates to.
 
@@ -191,6 +215,13 @@ class OrchestratorAgent(SDKAgent):
             connected = (
                 await cfg_repo._get_connected_providers(user_id) if user_id else set()
             )
+
+        # In-process skill servers (clyde_github, …) do not have OAuth
+        # credentials, so they would not pass the credential-backed filter
+        # below. Add their provider names explicitly so subagents that
+        # declare a SubagentTool link to them still see the tool.
+        in_process_servers = await self.build_in_process_mcp_servers(user_id=user_id)
+        connected = connected | set(in_process_servers.keys())
 
         result: dict[str, Any] = {}
         for link in links:
