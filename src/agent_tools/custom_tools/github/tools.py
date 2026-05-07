@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from src.agent_tools.custom_tools.github.client import fetch_failed_run_logs
+from src.agent_tools.custom_tools.github.helpers import fetch_failed_run_logs
 from src.agent_tools.custom_tools.mcp_server_builder import BaseSkillTool
 
 
