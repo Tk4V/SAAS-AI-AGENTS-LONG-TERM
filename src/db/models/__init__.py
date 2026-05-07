@@ -21,6 +21,7 @@ from src.db.models.agent_config import (
 from src.db.models.credential import Credential, CredentialKind
 from src.db.models.credential_event import CredentialEvent, CredentialEventType
 from src.db.models.project import ProviderKind, Project, ProjectRepo
+from src.db.models.memory_graph import MemoryEdge, MemoryNode
 from src.db.models.task import Task, TaskStatus
 
 __all__ = [
@@ -33,6 +34,8 @@ __all__ = [
     "CredentialEventType",
     "CredentialKind",
     "MCPServerConfig",
+    "MemoryEdge",
+    "MemoryNode",
     "ProviderKind",
     "Project",
     "ProjectRepo",
