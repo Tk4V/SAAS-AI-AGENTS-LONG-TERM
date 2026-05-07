@@ -107,6 +107,13 @@ def upgrade() -> None:
         "ON memory_nodes USING hnsw (embedding vector_cosine_ops)"
         " WHERE embedding IS NOT NULL"
     )
+    # Partial unique index on entity identity — required for upsert_entity's
+    # INSERT ... ON CONFLICT DO NOTHING pattern in GraphWriter.
+    op.execute(
+        "CREATE UNIQUE INDEX idx_memory_nodes_entity_identity "
+        "ON memory_nodes ((properties->>'kind'), (properties->>'identifier')) "
+        "WHERE node_type = 'entity'"
+    )
 
     # ── memory_edges ─────────────────────────────────────────────────────────
     op.create_table(
@@ -168,6 +175,7 @@ def downgrade() -> None:
     op.drop_index("idx_memory_edges_source", table_name="memory_edges")
     op.drop_table("memory_edges")
 
+    op.execute("DROP INDEX IF EXISTS idx_memory_nodes_entity_identity")
     op.execute("DROP INDEX IF EXISTS idx_memory_nodes_embedding_hnsw")
     op.drop_index("idx_memory_nodes_search_text", table_name="memory_nodes")
     op.drop_index("idx_memory_nodes_props", table_name="memory_nodes")
