@@ -14,6 +14,17 @@ from collections.abc import Iterable
 from src.agents.prompts.shared import IDENTITY
 
 
+CI_FAILURE_USER_PROMPT = """\
+CI failure detected on Clyde-managed task.
+- run_id: {run_id}
+- repository: {repo_full_name}
+- attempt: {attempt}
+
+Original task description:
+{description}
+"""
+
+
 BASE_SYSTEM_PROMPT = (
     f"{IDENTITY}\n\n"
     "Your role: Team Lead orchestrator.\n"

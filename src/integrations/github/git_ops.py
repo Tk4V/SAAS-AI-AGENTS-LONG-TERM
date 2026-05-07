@@ -105,6 +105,7 @@ class GitHubGitOps:
         repo_path: Path,
         branch: str,
         token: str,
+        force: bool = False,
     ) -> None:
         def _push() -> None:
             repo = Repo(str(repo_path))
@@ -115,7 +116,13 @@ class GitHubGitOps:
             )
             with origin.config_writer as cw:
                 cw.set("url", authed_url)
-            origin.push(refspec=f"{branch}:{branch}")
+            # ``+`` prefix on the refspec is git's force-push notation. Used
+            # by Publisher on Clyde-managed branches so a fix-loop iteration
+            # can overwrite a previous attempt's commit (the local clone is
+            # always fresh from default_branch and would otherwise non-fast-
+            # forward).
+            refspec = f"+{branch}:{branch}" if force else f"{branch}:{branch}"
+            origin.push(refspec=refspec)
 
         try:
             await asyncio.to_thread(_push)
