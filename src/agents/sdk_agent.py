@@ -9,9 +9,11 @@ actually agent-specific.
 
 from __future__ import annotations
 
+import fnmatch
 from abc import abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar
+from uuid import UUID
 
 from src.agents.base_agent import BaseAgent
 from src.db.queries.agent_config_query import AgentConfigRepository
@@ -149,6 +151,7 @@ class SDKAgent(BaseAgent):
         mcp_context: dict[str, Any] | None = None,
         extra_allowed_tools: list[str] | None = None,
         graph_context: dict[str, Any] | None = None,
+        task_id: "UUID | None" = None,
     ) -> str:
         """Drive a full Claude Agent SDK session and return its final result text.
 
@@ -216,12 +219,54 @@ class SDKAgent(BaseAgent):
         if subagents:
             options_kwargs["agents"] = subagents
 
+        # When task_id is set, wire a PreToolUse hook for the human-in-the-loop
+        # approval flow. The PreToolUse hook uses the SDK's initialize-based hook
+        # protocol (bidirectional stdio) which works with all CLI versions.
+        #
+        # NOTE: can_use_tool requires --permission-prompt-tool stdio which is NOT
+        # supported by CLI v2.1.119, so we use the hooks mechanism instead.
+        #
+        # The hook fires before every tool call. Pre-approved tools (everything in
+        # allowed_tools) are auto-approved immediately. Everything else is routed to
+        # the DB approval flow which pauses the pipeline until the user responds.
+        #
+        # Hooks require bidirectional streaming, so the prompt must be an AsyncIterable.
+        sdk_prompt: Any = prompt
+        if task_id is not None:
+            from claude_agent_sdk import HookMatcher
+
+            bash_patterns = [p for p in allowed_tools if p.lower().startswith("bash")]
+            hook = self._build_pre_tool_use_hook(
+                task_id=task_id,
+                user_id=context.get("user_id"),
+                allowed_tools=allowed_tools,
+                bash_patterns=bash_patterns,
+            )
+            options_kwargs["hooks"] = {
+                "PreToolUse": [HookMatcher(matcher=None, hooks=[hook], timeout=3600)],
+            }
+            # Keep "default" permission mode — the PreToolUse hook's permissionDecision
+            # field overrides the CLI's own gate, so pre-approved tools get "allow"
+            # and others block until the user responds.  bypassPermissions would work
+            # too, but the CLI rejects it when running as root (Docker containers).
+            options_kwargs["permission_mode"] = "default"
+
+            async def _prompt_stream() -> Any:
+                yield {
+                    "type": "user",
+                    "session_id": "",
+                    "message": {"role": "user", "content": prompt},
+                    "parent_tool_use_id": None,
+                }
+
+            sdk_prompt = _prompt_stream()
+
         result_text = ""
         turn_count = 0
 
         try:
             async for message in query(
-                prompt=prompt,
+                prompt=sdk_prompt,
                 options=ClaudeAgentOptions(**options_kwargs),
             ):
                 if isinstance(message, AssistantMessage):
@@ -353,6 +398,149 @@ class SDKAgent(BaseAgent):
                     tool_use_id=tool_use_id,
                     is_error=is_error,
                 )
+
+    def _build_pre_tool_use_hook(
+        self,
+        *,
+        task_id: UUID,
+        user_id: int | None,
+        allowed_tools: list[str],
+        bash_patterns: list[str] | None = None,
+    ) -> Any:
+        """Return a PreToolUse hook callback for the human-in-the-loop approval flow.
+
+        The hook fires before every tool call. Tools in ``allowed_tools`` are
+        auto-approved immediately. Bash commands matching ``bash_patterns`` are
+        also auto-approved. Everything else is routed to the DB approval flow:
+        a ``task_approvals`` row is created, the task flips to AWAITING_APPROVAL,
+        and the hook blocks until the user resolves it via the HTTP endpoint.
+
+        Uses the SDK's PreToolUse hook protocol (bidirectional stdio initialize
+        handshake) which works with all CLI versions, unlike ``can_use_tool``
+        which requires ``--permission-prompt-tool stdio`` (CLI ≥ ???).
+        """
+        from datetime import UTC, datetime
+
+        from src.agent_tools import permission_gate
+        from src.config.constants import WS_EVENT_TASK_APPROVAL_REQUESTED, WS_EVENT_TASK_STATUS_CHANGED
+        from src.db.models.task import TaskStatus
+        from src.db.queries.task_approval_query import TaskApprovalRepository
+        from src.db.queries.task_query import TaskRepository
+        from src.utils.broadcaster import broadcaster
+
+        logger = self._logger.bind(task_id=str(task_id))
+
+        _bash_patterns: list[str] = bash_patterns or []
+
+        _ALLOW: dict[str, Any] = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+            }
+        }
+
+        def _deny(reason: str) -> dict[str, Any]:
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+
+        async def _hook(hook_input: Any, tool_use_id: str | None, ctx: Any) -> Any:
+            # hook_input arrives as a raw dict from the SDK's internal dispatch.
+            if isinstance(hook_input, dict):
+                tool_name = hook_input.get("tool_name", "")
+                tool_input = hook_input.get("tool_input", {})
+            else:
+                tool_name = getattr(hook_input, "tool_name", "")
+                tool_input = getattr(hook_input, "tool_input", {})
+
+            logger.info("permission_gate.called", tool=tool_name, input_keys=list((tool_input or {}).keys()))
+
+            # For Bash, match the actual command against the extracted Bash patterns.
+            # Pattern format is "Bash(command_glob*)" — extract the inner glob.
+            if tool_name == "Bash":
+                command = (tool_input or {}).get("command", "")
+                for pat in _bash_patterns:
+                    inner = pat[len("Bash("):-1] if pat.startswith("Bash(") and pat.endswith(")") else ""
+                    if inner and fnmatch.fnmatch(command, inner):
+                        logger.info("permission_gate.auto_approved", tool=tool_name, command=command[:80])
+                        return _ALLOW
+                # Command not pre-approved — fall through to human review.
+            elif any(fnmatch.fnmatch(tool_name, pat) for pat in allowed_tools):
+                logger.info("permission_gate.auto_approved", tool=tool_name)
+                return _ALLOW
+
+            if user_id is None:
+                logger.warning("permission_gate.no_user_id", tool=tool_name)
+                return _deny("Cannot request approval: no user context.")
+
+            # Save the approval request to the DB.
+            async with db.session_scope() as session:
+                approval_repo = TaskApprovalRepository(session)
+                approval = await approval_repo.create(
+                    user_id=user_id,
+                    task_id=task_id,
+                    tool_name=tool_name,
+                    tool_input=tool_input or {},
+                )
+                approval_id = approval.id
+
+            # Flip task status to AWAITING_APPROVAL.
+            async with db.session_scope() as session:
+                task_repo = TaskRepository(session)
+                task = await task_repo.get(user_id=user_id, task_id=task_id)
+                await task_repo.update_status(task=task, status=TaskStatus.AWAITING_APPROVAL)
+
+            await broadcaster.publish(task_id, {
+                "name": WS_EVENT_TASK_APPROVAL_REQUESTED,
+                "agent": self.name,
+                "payload": {
+                    "approval_id": str(approval_id),
+                    "tool_name": tool_name,
+                },
+                "occurred_at": datetime.now(UTC).isoformat(),
+            })
+            await broadcaster.publish(task_id, {
+                "name": WS_EVENT_TASK_STATUS_CHANGED, "agent": None,
+                "payload": {"status": TaskStatus.AWAITING_APPROVAL.value},
+                "occurred_at": datetime.now(UTC).isoformat(),
+            })
+
+            logger.info(
+                "permission_gate.waiting",
+                tool=tool_name,
+                approval_id=str(approval_id),
+            )
+
+            event = permission_gate.register(task_id=task_id, approval_id=approval_id)
+            await event.wait()
+            approved = permission_gate.get_decision(approval_id=approval_id)
+
+            # Restore task status to RUNNING.
+            async with db.session_scope() as session:
+                task_repo = TaskRepository(session)
+                task = await task_repo.get(user_id=user_id, task_id=task_id)
+                await task_repo.update_status(task=task, status=TaskStatus.RUNNING)
+
+            await broadcaster.publish(task_id, {
+                "name": WS_EVENT_TASK_STATUS_CHANGED, "agent": None,
+                "payload": {"status": TaskStatus.RUNNING.value},
+                "occurred_at": datetime.now(UTC).isoformat(),
+            })
+
+            logger.info(
+                "permission_gate.resolved",
+                tool=tool_name,
+                approval_id=str(approval_id),
+                approved=approved,
+            )
+
+            return _ALLOW if approved else _deny("Tool use denied by user.")
+
+        return _hook
 
     @staticmethod
     def _summarize_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:

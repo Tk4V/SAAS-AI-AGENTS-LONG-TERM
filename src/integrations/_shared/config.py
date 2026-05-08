@@ -120,6 +120,11 @@ class OAuthProviderConfig:
     # (Atlassian cloud_id, Salesforce instance_url, etc.).
     post_callback_hook: PostCallbackHook | None = None
 
+    @property
+    def is_oauth_provider(self) -> bool:
+        """True when this provider supports the OAuth authorize/callback flow."""
+        return bool(self.authorize_url or self.server_metadata_url)
+
     def __post_init__(self) -> None:
         has_endpoints = bool(self.authorize_url and self.token_url)
         has_discovery = bool(self.server_metadata_url)

@@ -131,8 +131,9 @@ class OrchestratorAgent(SDKAgent):
             session_summary = await self.run_sdk_session(
                 prompt=description,
                 working_directory=primary_repo_path,
-                mcp_context={"user_id": user_id, "task_node_id": task_node_id},
+                mcp_context={"user_id": user_id, "task_node_id": task_node_id, "task_id": task_id},
                 graph_context={"task_node_id": task_node_id, "graph_writer": graph_writer},
+                task_id=UUID(task_id) if isinstance(task_id, str) else task_id,
             )
 
             file_changes: dict[str, list[dict[str, str]]] = {}
@@ -145,6 +146,8 @@ class OrchestratorAgent(SDKAgent):
             changed_file_count = sum(len(v) for v in file_changes.values())
             self.logger.info("orchestrator.session_completed", files_changed=changed_file_count)
             await graph_writer.finish_task(task_node_id=task_node_id, status="completed")
+            from src.agent_tools import permission_gate as _gate
+            _gate.cleanup(UUID(task_id) if isinstance(task_id, str) else task_id)
 
             return {
                 "repos": cloned_repos,
@@ -159,6 +162,8 @@ class OrchestratorAgent(SDKAgent):
             }
         except Exception:
             await graph_writer.finish_task(task_node_id=task_node_id, status="failed")
+            from src.agent_tools import permission_gate as _gate
+            _gate.cleanup(UUID(task_id) if isinstance(task_id, str) else task_id)
             shutil.rmtree(workspace_path, ignore_errors=True)
             raise
 

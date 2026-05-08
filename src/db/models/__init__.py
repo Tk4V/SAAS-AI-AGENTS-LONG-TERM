@@ -23,12 +23,14 @@ from src.db.models.credential_event import CredentialEvent, CredentialEventType
 from src.db.models.project import ProviderKind, Project, ProjectRepo
 from src.db.models.memory_graph import MemoryEdge, MemoryNode
 from src.db.models.task import Task, TaskStatus
+from src.db.models.task_approval import ApprovalStatus, TaskApproval
 
 __all__ = [
     "Agent",
     "AgentSubagent",
     "AgentSubagentMcp",
     "AgentToolConfig",
+    "ApprovalStatus",
     "Credential",
     "CredentialEvent",
     "CredentialEventType",
@@ -44,6 +46,7 @@ __all__ = [
     "SubagentTool",
     "SystemTool",
     "Task",
+    "TaskApproval",
     "TaskStatus",
     "UserToolConfig",
 ]
