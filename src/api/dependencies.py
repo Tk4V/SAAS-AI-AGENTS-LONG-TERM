@@ -101,16 +101,18 @@ async def require_admin(
     """Reject the request unless the caller is a Django superuser.
 
     Identity comes from the JWT (``user.id``); the admin flag is sourced
-    fresh from the Django-owned ``auth_user.is_superuser`` column on every
-    request. Promotions and demotions therefore take effect immediately —
-    no token refresh required, no stale claim to trust.
+    fresh from the Django-owned ``accounts_user.is_superuser`` column on
+    every request. Promotions and demotions therefore take effect
+    immediately — no token refresh required, no stale claim to trust.
 
     Resolution order:
-      1. ``auth_user.is_superuser`` — primary signal; works in dev/prod
-         where clyde_ai and clyde_drf share one Postgres instance.
+      1. ``accounts_user.is_superuser`` — primary signal; works in
+         dev/prod where clyde_ai and clyde_drf share one Postgres
+         database. (Note: Django uses a custom ``AUTH_USER_MODEL`` whose
+         table is ``accounts_user``, not the default ``auth_user``.)
       2. ``ADMIN_USER_IDS`` allowlist — fallback for local dev, used only
-         when step 1 fails because the ``auth_user`` relation is not in
-         the connected database (split-DB developer laptops).
+         when step 1 fails because the ``accounts_user`` relation is not
+         in the connected database (split-DB developer laptops).
 
     Other database failures (network, timeout, auth) propagate as 500 so
     we never silently fall through to the allowlist on infrastructure
@@ -121,9 +123,9 @@ async def require_admin(
         if await repo.is_superuser(user.id):
             return user
     except ProgrammingError:
-        # auth_user relation is absent — split-DB local dev. Roll back the
-        # aborted transaction so the rest of the request can still use the
-        # session, then fall through to the allowlist.
+        # accounts_user relation is absent — split-DB local dev. Roll back
+        # the aborted transaction so the rest of the request can still use
+        # the session, then fall through to the allowlist.
         await session.rollback()
 
     if user.id in _parse_admin_ids(get_settings().admin_user_ids):

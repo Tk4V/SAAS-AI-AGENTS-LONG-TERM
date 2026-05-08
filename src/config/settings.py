@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     jwt_audience: str = "clyde-ai"
 
     # Local-dev fallback only. In dev/prod, admin status is sourced from
-    # auth_user.is_superuser (Django-owned table in the shared Postgres
-    # instance — see src/db/queries/admin_lookup_query.py). This allowlist
+    # accounts_user.is_superuser (Django-owned table in the shared Postgres
+    # database — see src/db/queries/admin_lookup_query.py). This allowlist
     # is consulted only when that SELECT fails because of a split-DB local
     # setup; in deployed environments it should remain empty.
     admin_user_ids: str = ""
