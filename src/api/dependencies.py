@@ -12,6 +12,7 @@ from typing import Annotated
 
 from fastapi import Depends, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app_context import app_context
@@ -28,6 +29,7 @@ from src.credentials.oauth.token_provider import OAuthTokenProvider
 from src.credentials.resolver import CredentialResolver
 from src.credentials.service import CredentialService
 from src.db.models.credential import CredentialKind
+from src.db.queries.admin_lookup_query import AdminLookupRepository
 from src.db.queries.agent_config_query import AgentConfigRepository
 from src.db.queries.agent_query import (
     AgentRepository,
@@ -92,21 +94,44 @@ def _parse_admin_ids(raw: str) -> set[int]:
     return {int(part) for part in raw.split(",") if part.strip().isdigit()}
 
 
-async def require_admin(user: CurrentUserDep) -> CurrentUser:
-    """Reject the request unless the caller is an administrator.
+async def require_admin(
+    user: CurrentUserDep,
+    session: SessionDep,
+) -> CurrentUser:
+    """Reject the request unless the caller is a Django superuser.
 
-    Recognises two signals: an explicit ``is_admin`` claim in the JWT
-    (preferred — once Django adds it) or the user id appearing in the
-    ``admin_user_ids`` settings allowlist (the current stand-in).
+    Identity comes from the JWT (``user.id``); the admin flag is sourced
+    fresh from the Django-owned ``auth_user.is_superuser`` column on every
+    request. Promotions and demotions therefore take effect immediately —
+    no token refresh required, no stale claim to trust.
+
+    Resolution order:
+      1. ``auth_user.is_superuser`` — primary signal; works in dev/prod
+         where clyde_ai and clyde_drf share one Postgres instance.
+      2. ``ADMIN_USER_IDS`` allowlist — fallback for local dev, used only
+         when step 1 fails because the ``auth_user`` relation is not in
+         the connected database (split-DB developer laptops).
+
+    Other database failures (network, timeout, auth) propagate as 500 so
+    we never silently fall through to the allowlist on infrastructure
+    problems.
     """
-    claims = user.raw_claims or {}
-    if claims.get("is_admin") is True:
-        return user
+    repo = AdminLookupRepository(session)
+    try:
+        if await repo.is_superuser(user.id):
+            return user
+    except ProgrammingError:
+        # auth_user relation is absent — split-DB local dev. Roll back the
+        # aborted transaction so the rest of the request can still use the
+        # session, then fall through to the allowlist.
+        await session.rollback()
+
     if user.id in _parse_admin_ids(get_settings().admin_user_ids):
         return user
+
     raise AuthorizationError(
         "Administrator privileges are required for this endpoint.",
-        details={"required": "is_admin"},
+        details={"required": "is_superuser"},
     )
 
 

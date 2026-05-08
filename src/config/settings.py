@@ -68,9 +68,11 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     jwt_audience: str = "clyde-ai"
 
-    # Comma-separated list of Django user ids allowed to call /admin/* endpoints.
-    # Temporary stand-in for a proper role/permission claim from Django; once
-    # the JWT carries `is_admin`, switch to that and drop this list.
+    # Local-dev fallback only. In dev/prod, admin status is sourced from
+    # auth_user.is_superuser (Django-owned table in the shared Postgres
+    # instance — see src/db/queries/admin_lookup_query.py). This allowlist
+    # is consulted only when that SELECT fails because of a split-DB local
+    # setup; in deployed environments it should remain empty.
     admin_user_ids: str = ""
 
     anthropic_api_key: SecretStr = SecretStr("")
