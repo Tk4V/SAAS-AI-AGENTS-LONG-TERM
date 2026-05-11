@@ -31,10 +31,12 @@ import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from pydantic import TypeAdapter, ValidationError
 
+from src.agents.chat.session import SessionEndReason
 from src.api.dependencies import get_current_user_ws
 from src.api.schemas.task_message_schemas import (
     WSApprovalResponse,
     WSChatMessage,
+    WSCloseSession,
     WSInboundMessage,
     WSPing,
 )
@@ -48,8 +50,10 @@ from src.db.queries.task_approval_query import TaskApprovalRepository
 from src.db.queries.task_message_query import TaskMessageRepository
 from src.db.queries.task_query import TaskRepository
 from src.db.session import db
+from src.services.chat_session_service import chat_session_service
 from src.utils.broadcaster import broadcaster
 from src.utils.exceptions import AuthenticationError, ConflictError, NotFoundError
+from src.utils.task_input_queue import task_input_queue
 
 router = APIRouter(tags=["ws"])
 
@@ -161,6 +165,9 @@ async def _recv_loop(
         if isinstance(envelope, WSChatMessage):
             await _handle_chat_message(task_id, user_id, envelope, log)
             continue
+        if isinstance(envelope, WSCloseSession):
+            _handle_close_session(task_id, log)
+            continue
         if isinstance(envelope, WSApprovalResponse):
             try:
                 await _handle_approval_response(task_id, user_id, envelope, log)
@@ -177,26 +184,38 @@ async def _handle_chat_message(
     envelope: WSChatMessage,
     log: structlog.stdlib.BoundLogger,
 ) -> None:
-    async with db.session_scope() as session:
-        message = await TaskMessageRepository(session).create(
-            user_id=user_id,
-            task_id=task_id,
-            role=MessageRole.USER,
-            kind=MessageKind.CHAT,
-            content=envelope.content,
-        )
-        message_id = message.id
+    # The user message is persisted by ``SDKChatSession`` itself when it
+    # consumes the queue entry (so persisted-content == what-the-agent-saw,
+    # and the timing matches the agent.thinking event). We only echo the
+    # message back over the broadcaster here for other open tabs to see
+    # it immediately, and push it onto the session's input queue.
+    enqueued = await task_input_queue.push(task_id=task_id, content=envelope.content)
+    if not enqueued:
+        log.warning("ws.chat_message_dropped_queue_full", task_id=str(task_id))
 
     await broadcaster.publish(task_id, {
         "name": WS_EVENT_USER_MESSAGE,
         "agent": None,
         "payload": {
-            "message_id": str(message_id),
             "content": envelope.content,
+            "queued": enqueued,
         },
         "occurred_at": datetime.now(UTC).isoformat(),
     })
-    log.info("ws.chat_message", message_id=str(message_id))
+    log.info("ws.chat_message_enqueued", queued=enqueued)
+
+
+def _handle_close_session(
+    task_id: UUID,
+    log: structlog.stdlib.BoundLogger,
+) -> None:
+    """User asked the chat session to close. The session winds down
+    between turns (never mid-message); the broadcaster emits
+    ``session.closed`` once it actually finishes."""
+    closed = chat_session_service.request_close(
+        task_id, reason=SessionEndReason.USER_CLOSED
+    )
+    log.info("ws.close_session_requested", honoured=closed)
 
 
 async def _handle_approval_response(

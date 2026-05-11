@@ -28,6 +28,8 @@ class TaskStatus(str, enum.Enum):
 
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
+    AWAITING_USER_MESSAGE = "awaiting_user_message"
+    PUBLISHING = "publishing"
     AWAITING_CI = "awaiting_ci"
     FIXING = "fixing"
     COMPLETED = "completed"

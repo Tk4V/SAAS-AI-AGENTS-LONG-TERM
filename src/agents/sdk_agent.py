@@ -143,6 +143,113 @@ class SDKAgent(BaseAgent):
             )
         return list(self.SYSTEM_TOOLS) + mcp_patterns
 
+    async def _prepare_sdk_options(
+        self,
+        *,
+        working_directory: Path,
+        mcp_context: dict[str, Any] | None = None,
+        extra_allowed_tools: list[str] | None = None,
+        task_id: "UUID | None" = None,
+    ) -> Any:
+        """Assemble ``ClaudeAgentOptions`` for either one-shot or chat-mode runs.
+
+        Centralised so the option shape stays consistent between
+        ``run_sdk_session`` (legacy one-shot) and ``build_chat_session``
+        (persistent multi-turn).
+        """
+        from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+
+        context = mcp_context or {}
+
+        mcp_servers = await self.build_mcp_servers(context)
+        in_process_servers = await self.build_in_process_mcp_servers(
+            user_id=context.get("user_id"),
+            task_id=task_id,
+        )
+        if in_process_servers:
+            mcp_servers = {**mcp_servers, **in_process_servers}
+        subagents = await self.build_subagents(context)
+
+        allowed_tools = await self._load_allowed_tools(user_id=context.get("user_id"))
+        if extra_allowed_tools:
+            allowed_tools.extend(extra_allowed_tools)
+        from src.agent_tools.custom_tools import CLYDE_CHAT_SERVER_NAME
+        from src.agent_tools.custom_tools.chat.tools import ASK_USER_TOOL_NAME
+        ask_user_pattern = f"mcp__{CLYDE_CHAT_SERVER_NAME}__{ASK_USER_TOOL_NAME}"
+        if ask_user_pattern not in allowed_tools:
+            allowed_tools.append(ask_user_pattern)
+
+        if subagents and "Agent" not in allowed_tools:
+            raise RuntimeError(
+                f"{type(self).__name__} declares subagents in build_subagents "
+                f"but 'Agent' is missing from SDK_ALLOWED_TOOLS — Claude cannot "
+                f"invoke subagents without it.",
+            )
+
+        options_kwargs: dict[str, Any] = {
+            "allowed_tools": allowed_tools,
+            "cwd": str(working_directory),
+            "max_turns": self.SDK_MAX_TURNS,
+            "permission_mode": self.SDK_PERMISSION_MODE,
+            "model": self.SDK_MODEL,
+            "mcp_servers": mcp_servers,
+        }
+        if self.SDK_SYSTEM_PROMPT is not None:
+            options_kwargs["system_prompt"] = self.SDK_SYSTEM_PROMPT
+        if subagents:
+            options_kwargs["agents"] = subagents
+
+        if task_id is not None:
+            bash_patterns = [p for p in allowed_tools if p.lower().startswith("bash")]
+            hook = self._build_pre_tool_use_hook(
+                task_id=task_id,
+                user_id=context.get("user_id"),
+                allowed_tools=allowed_tools,
+                bash_patterns=bash_patterns,
+            )
+            options_kwargs["hooks"] = {
+                "PreToolUse": [HookMatcher(matcher=None, hooks=[hook], timeout=3600)],
+            }
+            options_kwargs["permission_mode"] = "default"
+
+        return ClaudeAgentOptions(**options_kwargs)
+
+    async def build_chat_session(
+        self,
+        *,
+        initial_prompt: str,
+        working_directory: Path,
+        task_id: UUID,
+        user_id: int,
+        mcp_context: dict[str, Any] | None = None,
+        extra_allowed_tools: list[str] | None = None,
+        post_turn_callback: Any | None = None,
+    ) -> Any:
+        """Construct a persistent ``SDKChatSession`` bound to this agent.
+
+        Returns the session — caller is responsible for awaiting
+        ``session.run()`` (or registering it with ``chat_session_service``).
+        The returned session reuses the same options the one-shot
+        ``run_sdk_session`` would have used, so hooks, MCP servers, and
+        subagents are identical between the two modes.
+        """
+        from src.agents.chat.session import SDKChatSession
+
+        options = await self._prepare_sdk_options(
+            working_directory=working_directory,
+            mcp_context={**(mcp_context or {}), "task_id": str(task_id)},
+            extra_allowed_tools=extra_allowed_tools,
+            task_id=task_id,
+        )
+        return SDKChatSession(
+            task_id=task_id,
+            user_id=user_id,
+            agent_name=self.name,
+            initial_prompt=initial_prompt,
+            options=options,
+            post_turn_callback=post_turn_callback,
+        )
+
     async def run_sdk_session(
         self,
         *,
