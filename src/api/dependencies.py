@@ -40,6 +40,8 @@ from src.db.queries.agent_query import (
 from src.db.queries.credential_event_query import CredentialEventRepository
 from src.db.queries.credential_query import CredentialRepository
 from src.db.queries.project_query import ProjectRepository
+from src.db.queries.task_approval_query import TaskApprovalRepository
+from src.db.queries.task_message_query import TaskMessageRepository
 from src.db.queries.task_query import TaskRepository
 from src.db.session import db
 from src.integrations._shared import (
@@ -174,6 +176,24 @@ def get_task_repository(session: SessionDep) -> TaskRepository:
 
 
 TaskRepositoryDep = Annotated[TaskRepository, Depends(get_task_repository)]
+
+
+def get_task_approval_repository(session: SessionDep) -> TaskApprovalRepository:
+    return TaskApprovalRepository(session)
+
+
+TaskApprovalRepositoryDep = Annotated[
+    TaskApprovalRepository, Depends(get_task_approval_repository)
+]
+
+
+def get_task_message_repository(session: SessionDep) -> TaskMessageRepository:
+    return TaskMessageRepository(session)
+
+
+TaskMessageRepositoryDep = Annotated[
+    TaskMessageRepository, Depends(get_task_message_repository)
+]
 
 
 def get_task_service(

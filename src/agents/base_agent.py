@@ -10,9 +10,12 @@ from __future__ import annotations
 import json
 import time
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import structlog
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 from src.app_context import AppContext
 from src.app_context import app_context as default_app_context
@@ -141,17 +144,34 @@ class BaseAgent(ABC):
         )
 
     async def build_in_process_mcp_servers(
-        self, user_id: int | None
+        self,
+        user_id: int | None,
+        task_id: "UUID | None" = None,
     ) -> dict[str, Any]:
         """Return additional MCP servers that run inside the Python process.
 
-        Default returns ``{}``. Subclasses override to register skills
-        (custom in-process MCP servers from ``agent_tools.custom_tools``)
-        on top of the DB-driven remote MCPs from
-        ``build_user_mcp_servers``. ``run_sdk_session`` merges both
-        before handing the union to ``ClaudeAgentOptions``.
+        Default attaches ``clyde_chat`` whenever both ``user_id`` and
+        ``task_id`` are known so every agent gets the ``ask_user`` tool
+        for free. Subclasses extend the dict to register provider-specific
+        skills (e.g. ``clyde_github``) on top of this baseline.
+        ``run_sdk_session`` merges the result with the DB-driven remote
+        MCPs from ``build_user_mcp_servers`` before handing the union to
+        ``ClaudeAgentOptions``.
         """
-        return {}
+        from src.agent_tools.custom_tools import (
+            CLYDE_CHAT_SERVER_NAME,
+            build_chat_skills_server,
+        )
+
+        if user_id is None or task_id is None:
+            return {}
+        return {
+            CLYDE_CHAT_SERVER_NAME: build_chat_skills_server(
+                task_id=task_id,
+                user_id=user_id,
+                agent_name=self.name,
+            ),
+        }
 
     async def build_user_mcp_servers(self, *, user_id: int) -> dict[str, Any]:
         """Mount MCP servers for every integration the user has connected.

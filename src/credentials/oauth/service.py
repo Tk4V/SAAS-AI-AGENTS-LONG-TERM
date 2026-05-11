@@ -62,6 +62,12 @@ class OAuthCredentialService:
         user_id: int,
         provider: ProviderKind,
     ) -> str:
+        cfg = self._catalog.get(provider)
+        if not cfg.is_oauth_provider:
+            from src.utils.exceptions import ValidationError
+            raise ValidationError(
+                f"{cfg.display_name} does not support OAuth. Connect it via bearer credentials.",
+            )
         request = self._adapter.build_authorize_request(
             kind=provider,
             user_id=user_id,

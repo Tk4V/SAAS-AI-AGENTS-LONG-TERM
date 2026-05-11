@@ -20,6 +20,7 @@ Members:
 from __future__ import annotations
 
 import httpx
+import redis.asyncio as redis
 import structlog
 from anthropic import AsyncAnthropic
 
@@ -31,6 +32,7 @@ class Clients:
         self._settings = settings or get_settings()
         self._http: httpx.AsyncClient | None = None
         self._anthropic: AsyncAnthropic | None = None
+        self._redis: redis.Redis | None = None
         self._logger = structlog.get_logger("clyde.clients")
 
     @property
@@ -51,6 +53,21 @@ class Clients:
             )
         return self._anthropic
 
+    @property
+    def redis(self) -> redis.Redis:
+        """Shared Redis client used by EventBroadcaster and permission_gate.
+
+        Lazily connects on first access. The connection pool is reused across
+        publish/subscribe sites — pubsub() returns a separate dedicated
+        connection per subscriber, which is fine and what we want.
+        """
+        if self._redis is None:
+            self._redis = redis.from_url(
+                self._settings.redis_url,
+                decode_responses=True,
+            )
+        return self._redis
+
     async def dispose(self) -> None:
         """Close every owned client. Call from the application lifespan exit."""
         if self._http is not None:
@@ -60,6 +77,9 @@ class Clients:
             # Anthropic SDK exposes close() as a coroutine on the async client.
             await self._anthropic.close()
             self._anthropic = None
+        if self._redis is not None:
+            await self._redis.aclose()
+            self._redis = None
         self._logger.info("clients.disposed")
 
 

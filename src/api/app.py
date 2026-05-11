@@ -27,6 +27,8 @@ from src.api.views import (
     projects_view,
     providers_view,
     subagents_view,
+    task_approvals_view,
+    task_messages_view,
     tasks_view,
     tools_view,
     webhooks_view,
@@ -180,6 +182,8 @@ class Application:
         app.include_router(agents_view.router, prefix=prefix)
         app.include_router(projects_view.router, prefix=prefix)
         app.include_router(tasks_view.router, prefix=prefix)
+        app.include_router(task_approvals_view.router, prefix=prefix)
+        app.include_router(task_messages_view.router, prefix=prefix)
         app.include_router(task_stream_view.router, prefix=prefix)
         app.include_router(credentials_view.router, prefix=prefix)
         app.include_router(credentials_oauth_view.router, prefix=prefix)
