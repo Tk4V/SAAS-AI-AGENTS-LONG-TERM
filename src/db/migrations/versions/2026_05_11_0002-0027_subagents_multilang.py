@@ -1,7 +1,7 @@
 """Subagent refinements: MCP realignment, multi-language system tools, prompt updates.
 
-Revision ID: 0026_subagents_multilang
-Revises: 0025_add_task_messages
+Revision ID: 0027_subagents_multilang
+Revises: 0026_subagent_escalation_prompt
 Create Date: 2026-05-11 00:02:00.000000
 
 MCP changes
@@ -44,8 +44,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0026_subagents_multilang"
-down_revision: Union[str, Sequence[str], None] = "0025_add_task_messages"
+revision: str = "0027_subagents_multilang"
+down_revision: Union[str, Sequence[str], None] = "0026_subagent_escalation_prompt"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
