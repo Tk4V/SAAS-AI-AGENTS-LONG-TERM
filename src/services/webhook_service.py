@@ -211,6 +211,27 @@ class WebhookService:
             return
 
         if run_data.conclusion == "failure":
+            # If a chat session is still alive for this task, do not
+            # start a parallel devops fix-pipeline — the agent is the
+            # one driving the workspace right now and a competing
+            # coroutine would race on the cloned repo. The user can
+            # paste the CI failure into the chat themselves; we still
+            # transition the task into FIXING to surface the signal.
+            from src.services.chat_session_service import chat_session_service
+            if chat_session_service.is_active(task.id):
+                log.info(
+                    "webhook.skipping_fix_chat_session_active",
+                    attempt=task.attempt,
+                )
+                await broadcaster.publish(task.id, {
+                    "name": WS_EVENT_TASK_STATUS_CHANGED,
+                    "agent": None,
+                    "payload": {"status": TaskStatus.FIXING.value},
+                    "occurred_at": "",
+                })
+                await repo.update_status(task=task, status=TaskStatus.FIXING)
+                return
+
             max_attempts = self._settings.max_fix_attempts
             if task.attempt >= max_attempts:
                 await repo.update_status(task=task, status=TaskStatus.NEEDS_HUMAN)

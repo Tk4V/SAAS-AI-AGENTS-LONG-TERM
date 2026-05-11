@@ -59,11 +59,19 @@ class OrchestratorAgent(SDKAgent):
     ]
 
     async def execute(self, state: dict[str, Any]) -> dict[str, Any]:
-        """Clone repositories, run the SDK session, and return file changes.
+        """Bootstrap a persistent chat session for this task.
 
-        Returns a state patch with keys: repos, diffs, context, events.
+        The execution model changed in CA-113: instead of running a single
+        SDK query loop and returning diffs to a separate Publisher step,
+        we keep a long-lived ``SDKChatSession`` open. After every agent
+        turn a post-turn callback (the auto-publisher) commits and pushes
+        whatever changed. The session ends only when the user explicitly
+        closes it or one of the timeouts fires.
+
+        Returns a small state patch — the bulk of per-turn state now
+        lives in ``task_messages`` and the task's own status transitions.
         """
-        task_id = state.get("task_id") or "unknown"
+        task_id_raw = state.get("task_id") or "unknown"
         user_id = state.get("user_id")
         agent_id_raw = state.get("agent_id")
         description = state.get("description") or ""
@@ -74,25 +82,21 @@ class OrchestratorAgent(SDKAgent):
         if not agent_id_raw:
             raise PipelineError("Orchestrator agent requires an agent_id in the pipeline state.")
         agent_id = UUID(agent_id_raw) if isinstance(agent_id_raw, str) else agent_id_raw
+        task_id_uuid = UUID(task_id_raw) if isinstance(task_id_raw, str) else task_id_raw
 
         # Resolve the user's Agent record + dynamically build the system prompt.
-        # We reuse the same `links` payload in build_subagents below to avoid
-        # a second DB round-trip during the SDK session bootstrap.
         async with db.session_scope() as session:
             agent_repo = AgentRepository(session)
             agent_record = await agent_repo.get(user_id=user_id, agent_id=agent_id)
             links = await agent_repo.list_subagents_for_agent(agent_id=agent_id)
             team_cfg_repo = TeamAgentConfigRepository(session)
             team_cfg = await team_cfg_repo.get("orchestrator")
-            # Detach so the relations stay readable after the session closes.
             session.expunge_all()
 
         subagent_descriptors = [
             (link.subagent.name, link.subagent.display_name, link.subagent.description)
             for link in links
         ]
-
-        # Load model and tool list from DB; fall back to class-level defaults.
         if team_cfg is not None:
             self.SDK_MODEL = team_cfg.model  # type: ignore[assignment]
             if team_cfg.system_tools:
@@ -101,26 +105,25 @@ class OrchestratorAgent(SDKAgent):
                     for st in team_cfg.system_tools
                     if st.is_active
                 ]
-
         self.SDK_SYSTEM_PROMPT = _build_orchestrator_prompt(
             agent_record.system_prompt,
             subagent_descriptors,
             base_prompt=team_cfg.system_prompt if team_cfg else None,
         )
-        self._agent_id = agent_id  # kept for diagnostics / future re-load
-        self._cached_links = links  # picked up by build_subagents
+        self._agent_id = agent_id
+        self._cached_links = links
 
         # ── memory graph ──────────────────────────────────────────────────────
         graph_writer = GraphWriter()
         task_node_id = await graph_writer.create_task_node(
-            task_id=task_id,
+            task_id=task_id_raw,
             user_id=user_id,
             agent_id=agent_id,
             description=description,
             attempt=state.get("attempt", 0),
         )
 
-        workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id}_"))
+        workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id_raw}_"))
         cloned_repos: list[dict[str, Any]] = []
         primary_repo_path = workspace_path
         primary_repo_name: str | None = None
@@ -137,46 +140,77 @@ class OrchestratorAgent(SDKAgent):
                 primary_repo_name = cloned_repos[0]["name"]
 
             self.logger.info(
-                "orchestrator.session_starting",
+                "orchestrator.chat_session_starting",
                 repository=primary_repo_name,
                 has_repo=primary_repo_name is not None,
                 task_description=description[:100],
             )
 
-            session_summary = await self.run_sdk_session(
-                prompt=description,
-                working_directory=primary_repo_path,
-                mcp_context={"user_id": user_id, "task_node_id": task_node_id, "task_id": task_id},
-                graph_context={"task_node_id": task_node_id, "graph_writer": graph_writer},
-                task_id=UUID(task_id) if isinstance(task_id, str) else task_id,
-            )
-
-            file_changes: dict[str, list[dict[str, str]]] = {}
-            if primary_repo_name is not None:
-                file_changes = await self._collect_file_changes(
-                    repository_path=primary_repo_path,
-                    repository_name=primary_repo_name,
+            # Persist workspace + repo metadata to task.state so the
+            # post-turn callback (which loads the task fresh on every
+            # turn) can find the cloned tree.
+            from src.db.queries.task_query import TaskRepository
+            async with db.session_scope() as session:
+                task_repo = TaskRepository(session)
+                task = await task_repo.get(user_id=user_id, task_id=task_id_uuid)
+                await task_repo.update_status(
+                    task=task, status=task.status,
+                    state_patch={
+                        "workspace_path": str(workspace_path),
+                        "repos": cloned_repos,
+                        "primary_repo_name": primary_repo_name,
+                    },
                 )
 
-            changed_file_count = sum(len(v) for v in file_changes.values())
-            self.logger.info("orchestrator.session_completed", files_changed=changed_file_count)
+            # The post-turn callback is wired up by ``task_service`` after
+            # this method returns the session config — it has visibility
+            # into the publisher, while this agent does not.
+            chat_session = await self.build_chat_session(
+                initial_prompt=description,
+                working_directory=primary_repo_path,
+                task_id=task_id_uuid,
+                user_id=user_id,
+                mcp_context={
+                    "user_id": user_id,
+                    "task_node_id": task_node_id,
+                },
+                post_turn_callback=state.get("_post_turn_callback"),
+            )
+
+            # Register with the process-wide service so the WS handler
+            # can call request_close(task_id) and the lifespan shutdown
+            # can drain it. Awaits the underlying run() to keep this
+            # call site blocking — the orchestrator coroutine ends only
+            # when the chat session ends.
+            from src.services.chat_session_service import chat_session_service
+            session_task = await chat_session_service.register_and_run(chat_session)
+            await session_task
+            self.logger.info(
+                "orchestrator.chat_session_finished",
+                turns=chat_session.turn_count,
+            )
             await graph_writer.finish_task(task_node_id=task_node_id, status="completed")
 
             return {
                 "repos": cloned_repos,
-                "diffs": file_changes,
-                "context": {"summary": session_summary[:2000]},
+                "primary_repo_name": primary_repo_name,
+                "workspace_path": str(workspace_path),
                 "events": [{
                     "name": "orchestrator.completed",
                     "agent": self.name,
                     "occurred_at": datetime.now(UTC).isoformat(),
-                    "payload": {"files_changed": changed_file_count},
+                    "payload": {"turns": chat_session.turn_count},
                 }],
             }
         except Exception:
             await graph_writer.finish_task(task_node_id=task_node_id, status="failed")
-            shutil.rmtree(workspace_path, ignore_errors=True)
             raise
+        finally:
+            # Workspace cleanup happens here regardless of success — the
+            # publisher (in the post-turn callback) is responsible for
+            # pushing changes during the session; nothing in the workspace
+            # is needed once the session ends.
+            shutil.rmtree(workspace_path, ignore_errors=True)
 
     async def build_mcp_servers(self, context: dict[str, Any]) -> dict[str, Any]:
         """Mount MCP servers for all integrations the user has connected."""

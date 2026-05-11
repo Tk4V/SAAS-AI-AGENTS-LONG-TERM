@@ -1,4 +1,4 @@
-"""Task service: persistence and pipeline orchestration."""
+"""Task service: persistence and chat-session orchestration."""
 
 from __future__ import annotations
 
@@ -12,11 +12,14 @@ from src.api.schemas.task_schemas import TaskCreate
 from src.db.models.task import Task, TaskStatus
 from src.db.queries.project_query import ProjectRepository
 from src.db.queries.task_query import TaskRepository
-from src.config.constants import WS_EVENT_PIPELINE_FAILED, WS_EVENT_TASK_STATUS_CHANGED
+from src.config.constants import WS_EVENT_PIPELINE_FAILED
 from src.db.session import db
 from src.utils.broadcaster import broadcaster
-from src.agents.team.orchestrator_agent import OrchestratorAgent
-from src.agents.team.publisher_agent import PublisherAgent
+
+# Agents and chat session imports are intentionally deferred to
+# ``_run_pipeline``. Eager-loading them here pulls the OrchestratorAgent
+# → SDKAgent → BaseAgent chain through the ``services/__init__`` re-
+# exports, which loops back into BaseAgent and breaks at test import.
 
 
 class TaskService:
@@ -103,36 +106,37 @@ class TaskService:
         }
 
     async def _run_pipeline(self, *, task_id: UUID, user_id: int, initial_state: dict[str, Any]) -> None:
-        """Background coroutine that runs the full pipeline."""
+        """Background coroutine that bootstraps the orchestrator chat session.
+
+        Lifecycle since CA-113:
+          1. Orchestrator builds a persistent ``SDKChatSession`` bound to this
+             task's repo workspace + tools + hooks.
+          2. The session runs the initial user-turn (task description), then
+             stays open feeding subsequent ``chat_message`` envelopes from
+             the WS handler into the same SDK conversation.
+          3. The post-turn callback (auto-publisher, wired in Phase 2)
+             commits and pushes any diffs after each turn.
+          4. The session ends on user close, idle/hard timeout, or error —
+             status transitions are owned by ``SDKChatSession`` itself, so
+             this coroutine only handles the catastrophic-failure path
+             (orchestrator crashed before the session even started).
+        """
         log = self._logger.bind(task_id=str(task_id))
         log.info("pipeline.started")
 
         try:
-            state = dict(initial_state)
-            pipeline = [OrchestratorAgent, PublisherAgent]
+            from src.agents.chat.turn_handler import build_post_turn_callback
+            from src.agents.team.orchestrator_agent import OrchestratorAgent
 
-            for agent_class in pipeline:
-                agent = agent_class()
-                result = await agent(state)
-                state = {**state, **result}
-            final_state = state
-
-            pr_urls = final_state.get("pr_urls")
-            new_status = TaskStatus.AWAITING_CI if pr_urls else TaskStatus.COMPLETED
-
-            async with db.session_scope() as session:
-                repo = TaskRepository(session)
-                task = await repo.get(user_id=user_id, task_id=task_id)
-                await repo.update_status(
-                    task=task, status=new_status, state_patch=final_state, pr_urls_patch=pr_urls or None,
-                )
-
-            await broadcaster.publish(task_id, {
-                "name": WS_EVENT_TASK_STATUS_CHANGED, "agent": None,
-                "payload": {"status": new_status.value}, "occurred_at": "",
-            })
-            await broadcaster.close_task(task_id)
-            log.info("pipeline.finished", status=new_status.value)
+            state = {
+                **initial_state,
+                "_post_turn_callback": build_post_turn_callback(
+                    task_id=task_id, user_id=user_id,
+                ),
+            }
+            orchestrator = OrchestratorAgent()
+            await orchestrator(state)
+            log.info("pipeline.finished")
 
         except Exception as exc:
             log.exception("pipeline.failed", error=str(exc))

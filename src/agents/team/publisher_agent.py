@@ -137,6 +137,176 @@ class PublisherAgent(BaseAgent):
         }
         return {"pr_urls": pr_urls, "events": [event]}
 
+    async def publish_turn(
+        self,
+        *,
+        workspace_path: Path,
+        repo_meta: dict[str, Any],
+        user_id: int,
+        task_id: str,
+        task_description: str,
+        branch_name: str | None = None,
+        prior_pr_url: str | None = None,
+        commit_summary: str = "",
+    ) -> dict[str, Any]:
+        """Commit + push the current workspace diff for one chat turn.
+
+        Returns a dict with:
+          * ``did_publish`` — False when there was nothing to commit
+            (e.g. the agent only answered a question without editing files).
+          * ``branch_name`` — same as input on increment turns; freshly
+            generated on the first publish.
+          * ``pr_url`` — the existing PR URL (preserved across turns) or
+            the URL of the newly opened PR on the first publish.
+
+        Idempotent on repeated turns: the branch is checked out / created
+        once, and subsequent calls just append new commits to it. The
+        GitHub PR auto-tracks the latest commit, so we only call the
+        REST API to open the PR on the first turn.
+        """
+        local_path = Path(repo_meta.get("local_path") or workspace_path)
+        url = repo_meta.get("url") or ""
+        repo_name = repo_meta.get("name") or "repo"
+        default_branch = repo_meta.get("default_branch", "main")
+
+        if not local_path.is_dir():
+            return {
+                "did_publish": False,
+                "branch_name": branch_name,
+                "pr_url": prior_pr_url,
+                "reason": "local_path_missing",
+            }
+
+        # Make sure we have a branch name even for the very first push.
+        new_branch = branch_name or f"clyde/{task_id[:8]}/{repo_name}"
+
+        # Set git identity once per workspace; cheap to re-run.
+        await self._run_git("config", "user.name", "Clyde AI", cwd=local_path)
+        await self._run_git(
+            "config", "user.email", "clyde@noreply.clyde.dev", cwd=local_path
+        )
+
+        # Detect current branch — if we're not on the target branch yet
+        # (first turn), create it; otherwise just stay put.
+        current_branch = (await self._run_git(
+            "rev-parse", "--abbrev-ref", "HEAD", cwd=local_path,
+        )).strip()
+        if current_branch != new_branch:
+            switched = await self._run_git(
+                "checkout", "-b", new_branch, cwd=local_path, allow_fail=True,
+            )
+            if switched is None:
+                await self._run_git("checkout", new_branch, cwd=local_path)
+
+        # Stage everything; commit may fail with "nothing to commit",
+        # which we treat as a clean no-op turn.
+        await self._run_git("add", "-A", cwd=local_path)
+        commit_msg = self._build_commit_message(
+            task_id=task_id, summary=commit_summary,
+        )
+        commit_result = await self._run_git(
+            "commit", "-m", commit_msg, cwd=local_path, allow_fail=True,
+        )
+        if commit_result is None:
+            # Nothing new to commit. Don't push, don't open a PR.
+            return {
+                "did_publish": False,
+                "branch_name": branch_name or new_branch,
+                "pr_url": prior_pr_url,
+                "reason": "no_changes",
+            }
+
+        token = await self.resolve_github_token(user_id=user_id)
+        await GitHubGitOps.push_branch(
+            repo_path=local_path, branch=new_branch, token=token, force=False,
+        )
+
+        # If the PR is already known we're done — GitHub auto-updates it.
+        if prior_pr_url:
+            return {
+                "did_publish": True,
+                "branch_name": new_branch,
+                "pr_url": prior_pr_url,
+            }
+
+        # First push for this turn-chain → generate PR body + open PR.
+        async with db.session_scope() as session:
+            team_cfg = await TeamAgentConfigRepository(session).get("publisher")
+        pub_prompt = team_cfg.system_prompt if team_cfg else _PUB_SYSTEM_PROMPT
+        pub_model = team_cfg.model if team_cfg else self.ctx.settings.anthropic_model_haiku
+        pr_template = (
+            team_cfg.prompt_template
+            if team_cfg and team_cfg.prompt_template
+            else PR_CONTENT_TEMPLATE
+        )
+
+        coordinates = GitHubGitOps.parse_repo_url(url)
+        client = GitHubApiClient(user_id=user_id, token_provider=self.token_provider)
+        try:
+            existing = await client.find_open_pr(
+                coordinates=coordinates, head=new_branch
+            )
+            if existing:
+                return {
+                    "did_publish": True,
+                    "branch_name": new_branch,
+                    "pr_url": existing["url"],
+                }
+            # Use the commit summary as a hint for the PR body — the
+            # changes_summary that the old flow built from a tracked-diff
+            # is now folded into commit_summary on the caller's side.
+            pr_content = await self._generate_pr_content(
+                description=task_description,
+                repo_name=repo_name,
+                changes=[{"action": "modify", "path": commit_summary[:80]}],
+                plan_summary="",
+                system_prompt=pub_prompt,
+                model=pub_model,
+                pr_template=pr_template,
+            )
+            created = await client.create_pull_request(
+                coordinates=coordinates,
+                title=pr_content.get("title", "Automated changes by Clyde"),
+                body=pr_content.get("body", ""),
+                head=new_branch,
+                base=default_branch,
+            )
+            return {
+                "did_publish": True,
+                "branch_name": new_branch,
+                "pr_url": created["url"],
+            }
+        finally:
+            await client.aclose()
+
+    @staticmethod
+    def _build_commit_message(*, task_id: str, summary: str) -> str:
+        head = summary.strip().splitlines()[0] if summary.strip() else "automated changes"
+        head = head[:72]
+        return f"clyde({task_id[:8]}): {head}"
+
+    @staticmethod
+    async def _run_git(
+        *args: str, cwd: Path, allow_fail: bool = False
+    ) -> str | None:
+        """Run a git subprocess. Returns stdout on success, ``None`` when
+        ``allow_fail`` is true and the command failed."""
+        process = await asyncio.create_subprocess_exec(
+            "git", *args,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await process.communicate()
+        if process.returncode != 0:
+            if allow_fail:
+                return None
+            raise PipelineError(
+                f"git {' '.join(args)} failed",
+                details={"stderr": stderr_bytes.decode(errors="replace")[:500]},
+            )
+        return stdout_bytes.decode(errors="replace")
+
     @staticmethod
     async def _git_prepare(*, repo_path: Path, branch: str) -> None:
         """Stage, commit, and prepare a feature branch in the local repo.

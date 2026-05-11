@@ -55,10 +55,25 @@ class WSApprovalResponse(BaseModel):
 
 
 class WSChatMessage(BaseModel):
-    """Inbound: free-form chat from the user, not tied to any approval."""
+    """Inbound: free-form chat from the user, not tied to any approval.
+
+    Routed into the task's persistent chat session via the Redis input
+    queue; the SDK session feeds it to the agent as the next user-turn.
+    """
 
     type: Literal["chat_message"]
     content: str = Field(min_length=1, max_length=8000)
+
+
+class WSCloseSession(BaseModel):
+    """Inbound: user wants the chat session to wind down gracefully.
+
+    The session honours this between turns (never mid-message) and the
+    auto-publisher runs as part of the last turn before close, so any
+    in-flight changes are already pushed by the time the close lands.
+    """
+
+    type: Literal["close_session"]
 
 
 class WSPing(BaseModel):
@@ -66,4 +81,4 @@ class WSPing(BaseModel):
 
 
 # Discriminated union — pydantic picks the right model from the ``type`` tag.
-WSInboundMessage = WSApprovalResponse | WSChatMessage | WSPing
+WSInboundMessage = WSApprovalResponse | WSChatMessage | WSCloseSession | WSPing

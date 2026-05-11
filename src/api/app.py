@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
@@ -210,12 +211,64 @@ class Application:
             env=self._settings.app_env,
             version=self._settings.app_version,
         )
+
+        # Restart safeguard: any task left in a live status from a
+        # previous run is orphaned — its chat-session coroutine died
+        # with the old process and there's no way to resume the SDK
+        # conversation. Mark them ``failed`` so the user sees a clear
+        # signal instead of a zombie row sitting in the task list.
+        try:
+            await _mark_orphaned_chat_sessions_failed(log)
+        except Exception:
+            log.exception("application.orphan_sweep_failed")
+
         try:
             yield
         finally:
+            # Drain any chat sessions that are still alive in this
+            # process before tearing the rest of the stack down.
+            try:
+                from src.services.chat_session_service import chat_session_service
+                await chat_session_service.shutdown_all(grace_sec=5.0)
+            except Exception:
+                log.exception("application.chat_shutdown_failed")
             await clients.dispose()
             await db.dispose()
             log.info("application.stopped")
+
+
+_LIVE_STATUSES = {
+    "running", "awaiting_approval", "awaiting_user_message",
+    "publishing", "fixing",
+}
+
+
+async def _mark_orphaned_chat_sessions_failed(log: Any) -> None:
+    """Walk every task in a live status and stamp it ``failed`` so a fresh
+    process doesn't carry the illusion that the previous run is still going.
+
+    Done in raw SQL because at startup the ORM session machinery is
+    initialised but not yet exercised — and we want a single atomic UPDATE
+    rather than N row loads.
+    """
+    from sqlalchemy import text
+    async with db.session_scope() as session:
+        result = await session.execute(
+            text(
+                "UPDATE tasks "
+                "SET status='failed', "
+                "    error_message=COALESCE(error_message,'') || ' (lost on app restart)', "
+                "    updated_at=now() "
+                "WHERE status::text = ANY(:statuses) "
+                "RETURNING id"
+            ),
+            {"statuses": list(_LIVE_STATUSES)},
+        )
+        affected = result.rowcount or 0
+    if affected:
+        log.warning("application.orphans_swept", count=affected)
+    else:
+        log.info("application.no_orphans")
 
 
 app = Application().build()
