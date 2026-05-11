@@ -1,6 +1,6 @@
 """Rename the ``repo-scanner`` subagent to ``code-auditor``.
 
-Revision ID: 0031_rename_repo_scanner_to_code_auditor
+Revision ID: 0031_code_auditor_rename
 Revises: 0030_subagents_memory_access
 Create Date: 2026-05-12 00:03:00.000000
 
@@ -38,7 +38,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0031_rename_repo_scanner_to_code_auditor"
+revision: str = "0031_code_auditor_rename"
 down_revision: Union[str, Sequence[str], None] = "0030_subagents_memory_access"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
