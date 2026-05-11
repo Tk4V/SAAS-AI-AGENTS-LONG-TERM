@@ -147,7 +147,7 @@ class OrchestratorAgent(SDKAgent):
             self.logger.info("orchestrator.session_completed", files_changed=changed_file_count)
             await graph_writer.finish_task(task_node_id=task_node_id, status="completed")
             from src.agent_tools import permission_gate as _gate
-            _gate.cleanup(UUID(task_id) if isinstance(task_id, str) else task_id)
+            _gate.cleanup_task(UUID(task_id) if isinstance(task_id, str) else task_id)
 
             return {
                 "repos": cloned_repos,
@@ -163,7 +163,7 @@ class OrchestratorAgent(SDKAgent):
         except Exception:
             await graph_writer.finish_task(task_node_id=task_node_id, status="failed")
             from src.agent_tools import permission_gate as _gate
-            _gate.cleanup(UUID(task_id) if isinstance(task_id, str) else task_id)
+            _gate.cleanup_task(UUID(task_id) if isinstance(task_id, str) else task_id)
             shutil.rmtree(workspace_path, ignore_errors=True)
             raise
 

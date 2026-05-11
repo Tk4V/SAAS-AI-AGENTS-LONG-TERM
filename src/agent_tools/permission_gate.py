@@ -161,3 +161,17 @@ async def cleanup(*, approval_id: UUID) -> None:
     Optional — Redis TTL would expire it anyway, but cleaning up keeps the
     keyspace tidy and visible in redis-cli."""
     await clients.redis.delete(_decision_key(approval_id))
+
+
+def cleanup_task(task_id: UUID) -> None:  # noqa: ARG001
+    """No-op shim retained for callers that used the old in-process API.
+
+    The previous implementation tracked pending approvals per task in
+    process memory and needed an explicit per-task sweep when the task
+    finished. The Redis-backed implementation gives every decision key a
+    TTL, so a missed cleanup expires harmlessly on its own. We keep the
+    function so existing call sites in agents/ keep working without an
+    awaited refactor; new code should call ``cleanup(approval_id=...)``
+    after consuming a single decision.
+    """
+    return None
