@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         SubagentSystemTool,
         SystemTool,
     )
-    from src.db.models.agent_config import MCPServerConfig, Subagent
+    from src.db.models.agent_config import MCPServerConfig, Subagent, TeamAgentConfig, TeamAgentSystemTool
 
 
 # ── Generic tool schemas (used by /tools view, kept for backwards compat) ────
@@ -366,3 +366,74 @@ class SubagentAdminUpdate(BaseModel):
     is_active: bool | None = None
     system_tool_ids: list[UUID] | None = None
     mcp_server_config_ids: list[UUID] | None = None
+
+
+# ── Admin-side: pipeline agents (orchestrator, publisher) ────────────────────
+
+
+class TeamAgentSystemToolRead(BaseModel):
+    """One system tool linked to a pipeline agent config."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    system_tool_id: UUID
+    name: str
+    display_name: str
+    pattern: str
+    is_active: bool
+
+    @classmethod
+    def from_orm(cls, link: "TeamAgentSystemTool") -> "TeamAgentSystemToolRead":
+        return cls(
+            system_tool_id=link.system_tool_id,
+            name=link.system_tool.name,
+            display_name=link.system_tool.display_name,
+            pattern=link.system_tool.pattern,
+            is_active=link.is_active,
+        )
+
+
+class TeamAgentConfigResponse(BaseModel):
+    """Admin view of a pipeline agent config."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    display_name: str
+    system_prompt: str
+    model: str
+    prompt_template: str | None
+    is_active: bool
+    system_tools: list[TeamAgentSystemToolRead]
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_orm(cls, config: "TeamAgentConfig") -> "TeamAgentConfigResponse":
+        return cls(
+            id=config.id,
+            name=config.name,
+            display_name=config.display_name,
+            system_prompt=config.system_prompt,
+            model=config.model,
+            prompt_template=config.prompt_template,
+            is_active=config.is_active,
+            system_tools=[
+                TeamAgentSystemToolRead.from_orm(st)
+                for st in (config.system_tools or [])
+            ],
+            created_at=config.created_at,
+            updated_at=config.updated_at,
+        )
+
+
+class TeamAgentConfigUpdate(BaseModel):
+    """PATCH payload for a pipeline agent config. All fields optional."""
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    system_prompt: str | None = Field(default=None, min_length=1)
+    model: str | None = Field(default=None, min_length=1, max_length=32)
+    prompt_template: str | None = None
+    is_active: bool | None = None
+    system_tool_ids: list[UUID] | None = None

@@ -98,16 +98,25 @@ BASE_SYSTEM_PROMPT = (
 def build_system_prompt(
     user_override: str | None,
     subagents: Iterable[tuple[str, str, str]],
+    *,
+    base_prompt: str | None = None,
 ) -> str:
     """Compose the runtime system prompt for an orchestrator session.
 
-    ``user_override`` is the per-Agent custom prompt (currently unused by
-    the user-facing API but retained for A/B-testing). ``subagents`` is an
-    iterable of ``(name, display_name, description)`` tuples — only the
-    sub-agents the user actually attached to this Agent are included so
-    the model never tries to delegate to one it does not have.
+    Priority order for the base:
+      1. ``user_override`` — per-Agent custom prompt set by the user.
+      2. ``base_prompt``   — admin-managed prompt from ``team_agent_configs`` DB row.
+      3. ``BASE_SYSTEM_PROMPT`` — hardcoded fallback (used when DB is unavailable).
+
+    ``subagents`` is an iterable of ``(name, display_name, description)`` tuples —
+    only the sub-agents the user actually attached to this Agent are included.
     """
-    base = user_override.strip() if user_override and user_override.strip() else BASE_SYSTEM_PROMPT
+    if user_override and user_override.strip():
+        base = user_override.strip()
+    elif base_prompt and base_prompt.strip():
+        base = base_prompt.strip()
+    else:
+        base = BASE_SYSTEM_PROMPT
     lines = ["", "Available sub-agents (delegate via the Agent tool):"]
     bullets: list[str] = []
     for name, display_name, description in subagents:

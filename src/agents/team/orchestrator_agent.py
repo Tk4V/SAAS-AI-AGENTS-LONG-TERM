@@ -30,7 +30,7 @@ from src.agents.prompts.team.orchestrator_prompts import (
     build_system_prompt as _build_orchestrator_prompt,
 )
 from src.agents.sdk_agent import SDKAgent
-from src.db.queries.agent_config_query import AgentConfigRepository
+from src.db.queries.agent_config_query import AgentConfigRepository, TeamAgentConfigRepository
 from src.db.queries.agent_query import AgentRepository
 from src.db.session import db
 from src.integrations.github import GitHubGitOps
@@ -82,6 +82,8 @@ class OrchestratorAgent(SDKAgent):
             agent_repo = AgentRepository(session)
             agent_record = await agent_repo.get(user_id=user_id, agent_id=agent_id)
             links = await agent_repo.list_subagents_for_agent(agent_id=agent_id)
+            team_cfg_repo = TeamAgentConfigRepository(session)
+            team_cfg = await team_cfg_repo.get("orchestrator")
             # Detach so the relations stay readable after the session closes.
             session.expunge_all()
 
@@ -89,8 +91,21 @@ class OrchestratorAgent(SDKAgent):
             (link.subagent.name, link.subagent.display_name, link.subagent.description)
             for link in links
         ]
+
+        # Load model and tool list from DB; fall back to class-level defaults.
+        if team_cfg is not None:
+            self.SDK_MODEL = team_cfg.model  # type: ignore[assignment]
+            if team_cfg.system_tools:
+                self.SYSTEM_TOOLS = [  # type: ignore[assignment]
+                    st.system_tool.pattern
+                    for st in team_cfg.system_tools
+                    if st.is_active
+                ]
+
         self.SDK_SYSTEM_PROMPT = _build_orchestrator_prompt(
-            agent_record.system_prompt, subagent_descriptors,
+            agent_record.system_prompt,
+            subagent_descriptors,
+            base_prompt=team_cfg.system_prompt if team_cfg else None,
         )
         self._agent_id = agent_id  # kept for diagnostics / future re-load
         self._cached_links = links  # picked up by build_subagents
