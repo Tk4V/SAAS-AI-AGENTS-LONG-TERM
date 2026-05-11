@@ -190,6 +190,7 @@ class SDKAgent(BaseAgent):
         mcp_servers = await self.build_mcp_servers(context)
         in_process_servers = await self.build_in_process_mcp_servers(
             user_id=context.get("user_id"),
+            task_id=task_id,
         )
         if in_process_servers:
             mcp_servers = {**mcp_servers, **in_process_servers}
@@ -198,6 +199,13 @@ class SDKAgent(BaseAgent):
         allowed_tools = await self._load_allowed_tools(user_id=context.get("user_id"))
         if extra_allowed_tools:
             allowed_tools.extend(extra_allowed_tools)
+        # Auto-allow ask_user — the tool itself IS the human-in-the-loop, so
+        # gating it through the approval hook would create an infinite loop.
+        from src.agent_tools.custom_tools import CLYDE_CHAT_SERVER_NAME
+        from src.agent_tools.custom_tools.chat.tools import ASK_USER_TOOL_NAME
+        ask_user_pattern = f"mcp__{CLYDE_CHAT_SERVER_NAME}__{ASK_USER_TOOL_NAME}"
+        if ask_user_pattern not in allowed_tools:
+            allowed_tools.append(ask_user_pattern)
 
         if subagents and "Agent" not in allowed_tools:
             raise RuntimeError(
@@ -424,7 +432,9 @@ class SDKAgent(BaseAgent):
         from src.agent_tools import permission_gate
         from src.config.constants import WS_EVENT_TASK_APPROVAL_REQUESTED, WS_EVENT_TASK_STATUS_CHANGED
         from src.db.models.task import TaskStatus
+        from src.db.models.task_message import MessageKind, MessageRole
         from src.db.queries.task_approval_query import TaskApprovalRepository
+        from src.db.queries.task_message_query import TaskMessageRepository
         from src.db.queries.task_query import TaskRepository
         from src.utils.broadcaster import broadcaster
 
@@ -477,7 +487,9 @@ class SDKAgent(BaseAgent):
                 logger.warning("permission_gate.no_user_id", tool=tool_name)
                 return _deny("Cannot request approval: no user context.")
 
-            # Save the approval request to the DB.
+            # Save the approval request to the DB and append the matching
+            # chat message in the same transaction so the UI sees them as
+            # a single atomic event.
             async with db.session_scope() as session:
                 approval_repo = TaskApprovalRepository(session)
                 approval = await approval_repo.create(
@@ -487,6 +499,19 @@ class SDKAgent(BaseAgent):
                     tool_input=tool_input or {},
                 )
                 approval_id = approval.id
+                await TaskMessageRepository(session).create(
+                    user_id=user_id,
+                    task_id=task_id,
+                    role=MessageRole.AGENT,
+                    kind=MessageKind.APPROVAL_REQUEST,
+                    content=f"{self.name} requests approval to use {tool_name}",
+                    author=self.name,
+                    meta={
+                        "approval_id": str(approval_id),
+                        "tool_name": tool_name,
+                        "tool_input": tool_input or {},
+                    },
+                )
 
             # Flip task status to AWAITING_APPROVAL.
             async with db.session_scope() as session:
@@ -494,12 +519,17 @@ class SDKAgent(BaseAgent):
                 task = await task_repo.get(user_id=user_id, task_id=task_id)
                 await task_repo.update_status(task=task, status=TaskStatus.AWAITING_APPROVAL)
 
+            # Subscribe to the wake channel BEFORE publishing the request, so a
+            # racy resolve from a fast user does not slip past us.
+            await permission_gate.register(task_id=task_id, approval_id=approval_id)
+
             await broadcaster.publish(task_id, {
                 "name": WS_EVENT_TASK_APPROVAL_REQUESTED,
                 "agent": self.name,
                 "payload": {
                     "approval_id": str(approval_id),
                     "tool_name": tool_name,
+                    "tool_input": tool_input or {},
                 },
                 "occurred_at": datetime.now(UTC).isoformat(),
             })
@@ -515,9 +545,10 @@ class SDKAgent(BaseAgent):
                 approval_id=str(approval_id),
             )
 
-            event = permission_gate.register(task_id=task_id, approval_id=approval_id)
-            await event.wait()
-            approved = permission_gate.get_decision(approval_id=approval_id)
+            approved, payload = await permission_gate.wait_for_decision(
+                approval_id=approval_id
+            )
+            await permission_gate.cleanup(approval_id=approval_id)
 
             # Restore task status to RUNNING.
             async with db.session_scope() as session:
@@ -538,7 +569,13 @@ class SDKAgent(BaseAgent):
                 approved=approved,
             )
 
-            return _ALLOW if approved else _deny("Tool use denied by user.")
+            if approved:
+                return _ALLOW
+            # Surface the user's free-form rejection text back to the agent
+            # as the deny reason, so it can react meaningfully ("the user
+            # said: do not touch prod") instead of just retrying.
+            user_text = (payload or {}).get("text") or "Tool use denied by user."
+            return _deny(str(user_text)[:500])
 
         return _hook
 

@@ -43,3 +43,9 @@ class TaskApproval(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
         default=ApprovalStatus.PENDING,
         index=True,
     )
+    # Free-form payload that the user attached to the approval response.
+    # Shape is up to the caller: a plain text answer, structured JSON for
+    # an `ask_user` tool, or null when the user just clicked approve/deny.
+    user_response: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )

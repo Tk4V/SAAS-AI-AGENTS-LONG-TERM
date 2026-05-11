@@ -51,3 +51,4 @@ tenacity==9.1.4
 structlog==25.5.0
 orjson==3.11.8
 python-dotenv==1.2.2
+redis[hiredis]==5.2.0

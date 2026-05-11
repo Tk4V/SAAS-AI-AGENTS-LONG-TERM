@@ -21,6 +21,20 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: clyde_redis_local
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - clyde_redis_local:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   migrate:
     build:
       context: .
@@ -55,6 +69,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     env_file:
@@ -68,6 +84,8 @@ services:
       DB_USER: ${POSTGRES_USER:-clyde}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-clyde}
       DB_SSL: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "8000:8000"
     volumes:
@@ -89,3 +107,4 @@ services:
 
 volumes:
   clyde_pg_local:
+  clyde_redis_local:

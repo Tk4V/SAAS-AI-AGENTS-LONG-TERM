@@ -22,6 +22,7 @@ class TaskApprovalRead(BaseModel):
     tool_name: str
     tool_input: dict[str, Any]
     status: ApprovalStatus
+    user_response: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
 
@@ -33,10 +34,7 @@ class TaskApprovalRead(BaseModel):
             tool_name=approval.tool_name,
             tool_input=approval.tool_input or {},
             status=approval.status,
+            user_response=approval.user_response,
             created_at=approval.created_at,
             updated_at=approval.updated_at,
         )
-
-
-class TaskApprovalResolve(BaseModel):
-    approved: bool

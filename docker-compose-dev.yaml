@@ -2,6 +2,20 @@
 name: clyde-ai-dev
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: clyde_redis_dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - clyde_redis_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   app:
     build:
       context: .
@@ -11,12 +25,20 @@ services:
     container_name: clyde_app_dev
     restart: unless-stopped
     user: root
+    depends_on:
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       APP_ENV: dev
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  clyde_redis_dev:

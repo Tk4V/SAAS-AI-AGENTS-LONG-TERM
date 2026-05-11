@@ -24,6 +24,7 @@ from src.db.models.project import ProviderKind, Project, ProjectRepo
 from src.db.models.memory_graph import MemoryEdge, MemoryNode
 from src.db.models.task import Task, TaskStatus
 from src.db.models.task_approval import ApprovalStatus, TaskApproval
+from src.db.models.task_message import MessageKind, MessageRole, TaskMessage
 
 __all__ = [
     "Agent",
@@ -38,6 +39,8 @@ __all__ = [
     "MCPServerConfig",
     "MemoryEdge",
     "MemoryNode",
+    "MessageKind",
+    "MessageRole",
     "ProviderKind",
     "Project",
     "ProjectRepo",
@@ -47,6 +50,7 @@ __all__ = [
     "SystemTool",
     "Task",
     "TaskApproval",
+    "TaskMessage",
     "TaskStatus",
     "UserToolConfig",
 ]

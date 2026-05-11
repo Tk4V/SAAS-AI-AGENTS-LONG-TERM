@@ -104,6 +104,19 @@ class Settings(BaseSettings):
 
     fernet_key: SecretStr = SecretStr("")
 
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: SecretStr = SecretStr("")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def redis_url(self) -> str:
+        """Composed Redis URL used by the broadcaster and permission gate."""
+        password = self.redis_password.get_secret_value()
+        auth = f":{password}@" if password else ""
+        return f"redis://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
     @property
     def allowed_origins(self) -> list[str]:
         """Split the comma-separated ALLOWED_ORIGINS string into a list."""

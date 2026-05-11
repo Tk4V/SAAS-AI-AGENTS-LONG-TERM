@@ -59,12 +59,18 @@ class TaskApprovalRepository:
         return list((await self._session.execute(stmt)).scalars().all())
 
     async def resolve(
-        self, *, approval_id: UUID, status: ApprovalStatus
+        self,
+        *,
+        approval_id: UUID,
+        status: ApprovalStatus,
+        user_response: dict[str, Any] | None = None,
     ) -> TaskApproval:
         stmt = select(TaskApproval).where(TaskApproval.id == approval_id)
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             raise NotFoundError(f"Approval {approval_id} was not found.")
         row.status = status
+        if user_response is not None:
+            row.user_response = user_response
         await self._session.flush()
         return row

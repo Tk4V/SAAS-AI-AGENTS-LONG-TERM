@@ -14,6 +14,14 @@ Agents register the resulting in-process servers via the
 ``BaseAgent.build_in_process_mcp_servers`` hook.
 """
 
+from src.agent_tools.custom_tools.chat import (
+    CLYDE_CHAT_SERVER_NAME,
+    build_chat_skills_server,
+)
 from src.agent_tools.custom_tools.github import build_github_skills_server
 
-__all__ = ["build_github_skills_server"]
+__all__ = [
+    "CLYDE_CHAT_SERVER_NAME",
+    "build_chat_skills_server",
+    "build_github_skills_server",
+]
