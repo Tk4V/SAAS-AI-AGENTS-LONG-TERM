@@ -227,16 +227,22 @@ class OrchestratorAgent(SDKAgent):
                 await cfg_repo._get_connected_providers(user_id) if user_id else set()
             )
 
-        # In-process skill servers (clyde_chat, clyde_github, …) do not
-        # have OAuth credentials, so they would not pass the credential-
-        # backed filter below. Add their provider names explicitly so
-        # subagents that declare a SubagentTool link to them still see
-        # the tool.
+        # In-process skill servers (clyde_github, …) do not have OAuth
+        # credentials, so they would not pass the credential-backed
+        # filter below. Add their provider names explicitly so subagents
+        # that declare a SubagentTool link to them still see the tool.
+        # `clyde_chat` (the ``ask_user`` tool) is intentionally excluded —
+        # only the orchestrator talks to the user; subagents that need
+        # missing context return a structured request to the orchestrator
+        # which then asks on their behalf. Single voice to the user.
+        from src.agent_tools.custom_tools import CLYDE_CHAT_SERVER_NAME
         task_id: UUID | None = context.get("task_id")
         in_process_servers = await self.build_in_process_mcp_servers(
             user_id=user_id, task_id=task_id
         )
-        connected = connected | set(in_process_servers.keys())
+        connected = connected | (
+            set(in_process_servers.keys()) - {CLYDE_CHAT_SERVER_NAME}
+        )
 
         result: dict[str, Any] = {}
         for link in links:
