@@ -3,7 +3,7 @@
 Receives a free-form user task, optionally clones the user's repositories
 when code access is needed, and runs a Claude Agent SDK session that
 delegates work to specialised sub-agents (code-implementer, code-explorer,
-test-runner, manager, repo-scanner). Returns file diffs and a summary.
+test-runner, manager, code-auditor). Returns file diffs and a summary.
 """
 
 from __future__ import annotations
