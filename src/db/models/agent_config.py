@@ -12,7 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
-    from src.db.models.agent import SubagentSystemTool
+    from src.db.models.agent import SubagentSystemTool, SystemTool
 
 
 class AgentToolConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -149,3 +149,59 @@ class SubagentTool(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     subagent: Mapped[Subagent] = relationship(back_populates="tools")
     mcp_server: Mapped[MCPServerConfig] = relationship(lazy="selectin")
+
+
+class TeamAgentSystemTool(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Admin-defined link between a TeamAgentConfig and a SystemTool.
+
+    Mirrors ``SubagentSystemTool`` but for pipeline agents (orchestrator,
+    publisher) rather than catalog subagents. One row means the pipeline
+    agent is allowed to use that built-in SDK tool.
+    """
+
+    __tablename__ = "team_agent_system_tools"
+    __table_args__ = (
+        UniqueConstraint(
+            "team_agent_config_id", "system_tool_id",
+            name="uq_team_agent_system_tools_config_tool",
+        ),
+    )
+
+    team_agent_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("team_agent_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    system_tool_id: Mapped[UUID] = mapped_column(
+        ForeignKey("system_tools.id", ondelete="CASCADE"), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    system_tool: Mapped["SystemTool"] = relationship(lazy="joined")
+
+
+class TeamAgentConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Admin-managed configuration for pipeline agents (orchestrator, publisher).
+
+    Rows are seeded by migration and are update-only — admins never create
+    or delete rows via the API. Changes here take effect on the next task
+    execution without a redeploy.
+
+    ``prompt_template`` is nullable. The publisher uses it for the
+    PR-content fill-in template (``PR_CONTENT_TEMPLATE``). Other agents
+    leave it ``NULL``.
+    """
+
+    __tablename__ = "team_agent_configs"
+    __table_args__ = (UniqueConstraint("name", name="uq_team_agent_configs_name"),)
+
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    system_tools: Mapped[list[TeamAgentSystemTool]] = relationship(
+        primaryjoin="TeamAgentConfig.id == foreign(TeamAgentSystemTool.team_agent_config_id)",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models.agent_config import AgentToolConfig, MCPServerConfig, Subagent, SubagentTool, UserToolConfig
+from src.db.models.agent_config import AgentToolConfig, MCPServerConfig, Subagent, SubagentTool, TeamAgentConfig, TeamAgentSystemTool, UserToolConfig
 from src.db.models.credential import Credential, CredentialKind
 
 
@@ -258,6 +258,76 @@ class AgentConfigRepository:
             .returning(SubagentTool)
         )
         return (await self._session.execute(stmt)).scalar_one()
+
+
+class TeamAgentConfigRepository:
+    """CRUD for pipeline-agent configurations (orchestrator, publisher).
+
+    Rows are seeded by migration and are update-only — admins never create
+    or delete rows via the API.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, name: str) -> TeamAgentConfig | None:
+        """Return the active config for a pipeline agent by name slug, or None."""
+        stmt = select(TeamAgentConfig).where(
+            TeamAgentConfig.name == name,
+            TeamAgentConfig.is_active.is_(True),
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
+    async def list_all(self) -> list[TeamAgentConfig]:
+        """Return all pipeline agent configs (including inactive), for admin listing."""
+        stmt = select(TeamAgentConfig).order_by(TeamAgentConfig.name)
+        return list((await self._session.execute(stmt)).scalars().unique().all())
+
+    async def update(
+        self,
+        *,
+        config: TeamAgentConfig,
+        display_name: str | None = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        prompt_template: str | None = None,
+        is_active: bool | None = None,
+    ) -> TeamAgentConfig:
+        """Apply non-None kwargs to the config, flush, and return it."""
+        if display_name is not None:
+            config.display_name = display_name
+        if system_prompt is not None:
+            config.system_prompt = system_prompt
+        if model is not None:
+            config.model = model
+        if prompt_template is not None:
+            config.prompt_template = prompt_template
+        if is_active is not None:
+            config.is_active = is_active
+        await self._session.flush()
+        return config
+
+    async def set_system_tools(
+        self, *, team_agent_config_id: UUID, system_tool_ids: list[UUID]
+    ) -> list[TeamAgentSystemTool]:
+        """Replace the pipeline agent's system-tool set with the provided list."""
+        from sqlalchemy import delete as sa_delete
+        await self._session.execute(
+            sa_delete(TeamAgentSystemTool).where(
+                TeamAgentSystemTool.team_agent_config_id == team_agent_config_id,
+            )
+        )
+        rows = [
+            TeamAgentSystemTool(
+                team_agent_config_id=team_agent_config_id,
+                system_tool_id=tid,
+                is_active=True,
+            )
+            for tid in system_tool_ids
+        ]
+        self._session.add_all(rows)
+        await self._session.flush()
+        return rows
 
 
 def _extract_provider(pattern: str, known_providers: set[str]) -> str | None:

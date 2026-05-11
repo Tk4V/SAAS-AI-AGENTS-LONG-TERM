@@ -23,6 +23,8 @@ from src.agents.prompts.team.publisher_prompts import (
     PR_CONTENT_TEMPLATE,
     SYSTEM_PROMPT as _PUB_SYSTEM_PROMPT,
 )
+from src.db.queries.agent_config_query import TeamAgentConfigRepository
+from src.db.session import db
 from src.integrations.github import GitHubApiClient, GitHubGitOps
 from src.utils.exceptions import PipelineError
 
@@ -55,6 +57,18 @@ class PublisherAgent(BaseAgent):
             self.logger.warning("publisher.no_diffs")
             return {"pr_urls": {}, "events": []}
 
+        # Load publisher config from DB once; fall back to hardcoded defaults.
+        async with db.session_scope() as session:
+            team_cfg = await TeamAgentConfigRepository(session).get("publisher")
+
+        pub_prompt = team_cfg.system_prompt if team_cfg else _PUB_SYSTEM_PROMPT
+        pub_model = team_cfg.model if team_cfg else self.ctx.settings.anthropic_model_haiku
+        pr_template = (
+            team_cfg.prompt_template
+            if team_cfg and team_cfg.prompt_template
+            else PR_CONTENT_TEMPLATE
+        )
+
         token = await self.resolve_github_token(user_id=user_id)
         repo_map = {r.get("name", ""): r for r in repos}
         pr_urls: dict[str, str] = {}
@@ -85,6 +99,9 @@ class PublisherAgent(BaseAgent):
                     repo_name=repo_name,
                     changes=changes,
                     plan_summary=plan.get("summary", ""),
+                    system_prompt=pub_prompt,
+                    model=pub_model,
+                    pr_template=pr_template,
                 )
 
                 existing = await client.find_open_pr(
@@ -169,13 +186,16 @@ class PublisherAgent(BaseAgent):
         repo_name: str,
         changes: list[dict[str, Any]],
         plan_summary: str,
+        system_prompt: str,
+        model: str,
+        pr_template: str,
     ) -> dict[str, Any]:
         """Ask the LLM to produce a PR title and markdown body from the change set."""
         changes_summary = "\n".join(
             f"- {change.get('action', 'modify')}: {change.get('path', '?')}"
             for change in changes
         )
-        prompt = PR_CONTENT_TEMPLATE.format(
+        prompt = pr_template.format(
             description=description,
             repo_name=repo_name,
             changes_summary=changes_summary,
@@ -183,9 +203,9 @@ class PublisherAgent(BaseAgent):
         )
 
         response = await self.clients.anthropic.messages.create(
-            model=self.ctx.settings.anthropic_model_haiku,
+            model=model,
             max_tokens=2048,
-            system=_PUB_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text

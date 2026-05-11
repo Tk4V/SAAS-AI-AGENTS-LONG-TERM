@@ -33,7 +33,7 @@ from src.api.views import (
     tools_view,
     webhooks_view,
 )
-from src.api.views.admin import subagents_admin_view
+from src.api.views.admin import subagents_admin_view, team_agents_admin_view
 from src.api.websocket import task_stream_view
 from src.config import Settings, get_settings
 from src.db.session import db
@@ -105,6 +105,13 @@ _OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Admin · MCP Servers",
         "description": "Admin-only listing of MCP server configurations.",
+    },
+    {
+        "name": "Admin · Team Agents",
+        "description": (
+            "Admin-only update of pipeline agent configs (orchestrator, publisher). "
+            "Edit system prompts, models, and tool lists without redeploying."
+        ),
     },
     {
         "name": "Providers",
@@ -191,6 +198,7 @@ class Application:
         app.include_router(tools_view.router, prefix=prefix)
         app.include_router(subagents_view.router, prefix=prefix)
         app.include_router(subagents_admin_view.router, prefix=prefix)
+        app.include_router(team_agents_admin_view.router, prefix=prefix)
         app.include_router(webhooks_view.router, prefix=prefix)
         app.include_router(mcp_aws_proxy_view.router, prefix=prefix)
 
