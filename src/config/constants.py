@@ -29,5 +29,5 @@ WS_INBOUND_PING: Final = "ping"
 # cache TTL is ~5 min so any idle longer than that loses the cache; a
 # longer idle window is still useful (user can come back, lose some
 # cache, continue). Hard cap stops genuinely abandoned sessions.
-CHAT_SESSION_IDLE_TIMEOUT_SEC: Final = 30 * 60
+CHAT_SESSION_IDLE_TIMEOUT_SEC: Final = 60 * 60
 CHAT_SESSION_HARD_TIMEOUT_SEC: Final = 4 * 60 * 60
