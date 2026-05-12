@@ -74,4 +74,14 @@ class Task(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
 
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # UUID we hand to the Claude Agent SDK as ``ClaudeAgentOptions.session_id``
+    # on the first turn. The same value is later used as ``resume=...`` after
+    # an app restart to reload the conversation transcript from S3. Nullable
+    # because tasks predating CA-113 (and tasks that die before the SDK
+    # client is even opened) never get one.
+    sdk_session_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+    )
+
     project: Mapped["Project"] = relationship("Project", back_populates="tasks")

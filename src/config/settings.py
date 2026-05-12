@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_password: SecretStr = SecretStr("")
 
+    # S3 location for Claude Agent SDK session transcripts. Set per-env
+    # (separate buckets for dev / staging / prod). Empty bucket disables
+    # the S3 store — sessions fall back to local-disk only and resume
+    # across container restarts will not work.
+    s3_sessions_bucket: str = ""
+    s3_sessions_prefix: str = "sessions"
+    s3_sessions_region: str = ""  # falls back to `aws_region` if empty
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def redis_url(self) -> str:
