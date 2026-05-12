@@ -19,6 +19,9 @@ Members:
 
 from __future__ import annotations
 
+from typing import Any
+
+import boto3
 import httpx
 import redis.asyncio as redis
 import structlog
@@ -33,6 +36,7 @@ class Clients:
         self._http: httpx.AsyncClient | None = None
         self._anthropic: AsyncAnthropic | None = None
         self._redis: redis.Redis | None = None
+        self._s3_sessions: Any | None = None
         self._logger = structlog.get_logger("clyde.clients")
 
     @property
@@ -52,6 +56,30 @@ class Clients:
                 api_key=self._settings.anthropic_api_key.get_secret_value(),
             )
         return self._anthropic
+
+    @property
+    def s3_sessions(self) -> Any:
+        """Shared boto3 S3 client used by the chat-session transcript store.
+
+        Synchronous client — call sites wrap in ``asyncio.to_thread`` since
+        each turn produces only a handful of GET/PUT operations and we
+        don't want an ``aioboto3`` dependency just for that. The boto3 S3
+        client is documented to be thread-safe for concurrent use.
+
+        Settings must populate ``s3_sessions_bucket`` for any chat code to
+        actually use this; an unset bucket means "store sessions only on
+        local disk", which is fine for dev but means resume across
+        container restarts will silently not work.
+        """
+        if self._s3_sessions is None:
+            region = (
+                self._settings.s3_sessions_region or self._settings.aws_region or None
+            )
+            self._s3_sessions = boto3.client(
+                "s3",
+                region_name=region,
+            )
+        return self._s3_sessions
 
     @property
     def redis(self) -> redis.Redis:
@@ -80,6 +108,9 @@ class Clients:
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None
+        # boto3 S3 client doesn't expose a close() — drop the reference so
+        # GC can collect it; the underlying urllib3 pools clean themselves.
+        self._s3_sessions = None
         self._logger.info("clients.disposed")
 
 

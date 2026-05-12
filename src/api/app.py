@@ -244,31 +244,124 @@ _LIVE_STATUSES = {
 
 
 async def _mark_orphaned_chat_sessions_failed(log: Any) -> None:
-    """Walk every task in a live status and stamp it ``failed`` so a fresh
-    process doesn't carry the illusion that the previous run is still going.
+    """Reconcile in-flight task state with a fresh process.
 
-    Done in raw SQL because at startup the ORM session machinery is
-    initialised but not yet exercised — and we want a single atomic UPDATE
-    rather than N row loads.
+    Two outcomes per orphan task:
+
+    * **Resumable** — the row has a ``sdk_session_id``, so the SDK has a
+      transcript persisted (S3 if a bucket is configured, local disk
+      otherwise). Spawn a fresh chat-session coroutine with ``resume=...``;
+      the agent picks up exactly where the previous container left off.
+    * **Lost** — no ``sdk_session_id`` means the previous process died
+      before the SDK client was even opened. Nothing to resume; stamp the
+      row ``failed`` so it doesn't sit zombie in the user's task list.
+
+    The choice is per-row, not per-batch, because both states can coexist
+    after a deploy that happened during early-startup of some tasks.
     """
+    import asyncio as _asyncio
     from sqlalchemy import text
+
     async with db.session_scope() as session:
         result = await session.execute(
             text(
-                "UPDATE tasks "
-                "SET status='failed', "
-                "    error_message=COALESCE(error_message,'') || ' (lost on app restart)', "
-                "    updated_at=now() "
-                "WHERE status::text = ANY(:statuses) "
-                "RETURNING id"
+                "SELECT id, user_id, sdk_session_id, status "
+                "FROM tasks "
+                "WHERE status::text = ANY(:statuses)"
             ),
             {"statuses": list(_LIVE_STATUSES)},
         )
-        affected = result.rowcount or 0
-    if affected:
-        log.warning("application.orphans_swept", count=affected)
-    else:
+        rows = list(result.mappings().all())
+
+    if not rows:
         log.info("application.no_orphans")
+        return
+
+    resumable = [r for r in rows if r["sdk_session_id"] is not None]
+    lost = [r for r in rows if r["sdk_session_id"] is None]
+
+    if lost:
+        async with db.session_scope() as session:
+            await session.execute(
+                text(
+                    "UPDATE tasks "
+                    "SET status='failed', "
+                    "    error_message=COALESCE(error_message,'') "
+                    "        || ' (lost on app restart — no SDK session)', "
+                    "    updated_at=now() "
+                    "WHERE id = ANY(:ids)"
+                ),
+                {"ids": [r["id"] for r in lost]},
+            )
+        log.warning("application.orphans_lost", count=len(lost))
+
+    if resumable:
+        # Spawn a resume coroutine per task. Each one builds its own
+        # initial state from the task row + project metadata, then runs
+        # the orchestrator just like a fresh task — except orchestrator's
+        # execute() sees ``resume_session_id`` in state and tells the SDK
+        # to reload the transcript instead of starting from scratch.
+        for row in resumable:
+            _asyncio.create_task(
+                _resume_one(
+                    task_id=row["id"],
+                    user_id=row["user_id"],
+                    sdk_session_id=row["sdk_session_id"],
+                    log=log,
+                ),
+                name=f"resume-task-{row['id']}",
+            )
+        log.info("application.orphans_resuming", count=len(resumable))
+
+
+async def _resume_one(*, task_id: Any, user_id: int, sdk_session_id: Any, log: Any) -> None:
+    """Rebuild the initial pipeline state for one task and re-run it with
+    ``resume_session_id`` so the SDK reloads its transcript instead of
+    starting fresh. Failures are logged and the task is marked failed —
+    a botched resume should never wedge app startup."""
+    try:
+        from src.agents.chat.turn_handler import build_post_turn_callback
+        from src.agents.team.orchestrator_agent import OrchestratorAgent
+        from src.db.queries.project_query import ProjectRepository
+        from src.db.queries.task_query import TaskRepository
+        from src.services.task_service import TaskService
+
+        async with db.session_scope() as session:
+            task = await TaskRepository(session).get(
+                user_id=user_id, task_id=task_id,
+            )
+            project = await ProjectRepository(session).get(
+                user_id=user_id, project_id=task.project_id,
+            )
+
+        initial_state = TaskService._build_initial_state(
+            task=task, user_id=user_id, project=project,
+        )
+        initial_state["resume_session_id"] = str(sdk_session_id)
+        initial_state["_post_turn_callback"] = build_post_turn_callback(
+            task_id=task_id, user_id=user_id,
+        )
+        log.info("application.resume_spawning", task_id=str(task_id))
+        await OrchestratorAgent()(initial_state)
+    except Exception as exc:
+        log.exception(
+            "application.resume_failed", task_id=str(task_id), error=str(exc),
+        )
+        try:
+            from sqlalchemy import text
+            async with db.session_scope() as session:
+                await session.execute(
+                    text(
+                        "UPDATE tasks SET status='failed', "
+                        "  error_message=COALESCE(error_message,'') "
+                        "    || ' (resume failed: ' || :err || ')', "
+                        "  updated_at=now() "
+                        "WHERE id = :id"
+                    ),
+                    {"id": task_id, "err": str(exc)[:200]},
+                )
+        except Exception:
+            log.exception("application.resume_failure_update_failed")
 
 
 app = Application().build()

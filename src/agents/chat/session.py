@@ -105,6 +105,7 @@ class SDKChatSession:
         post_turn_callback: PostTurnCallback | None = None,
         idle_timeout_sec: float | None = None,
         hard_timeout_sec: float | None = None,
+        is_resumed: bool = False,
     ) -> None:
         self.task_id = task_id
         self.user_id = user_id
@@ -115,6 +116,12 @@ class SDKChatSession:
         self._client: ClaudeSDKClient | None = None
         self._turn_count = 0
         self._close_requested: SessionEndReason | None = None
+        # When resuming a transcript loaded from S3, the initial user
+        # prompt is already part of the conversation — sending it again
+        # would duplicate the first turn. The run loop skips the initial
+        # turn in this case and goes straight to waiting on the input
+        # queue for the user's NEXT message.
+        self._is_resumed = is_resumed
         self._lifecycle = Lifecycle(
             idle_timeout_sec=idle_timeout_sec or Lifecycle.idle_timeout_sec,
             hard_timeout_sec=hard_timeout_sec or Lifecycle.hard_timeout_sec,
@@ -145,8 +152,13 @@ class SDKChatSession:
         self._logger.info("chat_session.started")
 
         try:
-            # First turn: the original task description.
-            await self._run_one_turn(self.initial_prompt, is_initial=True)
+            # First turn: the original task description. Skipped on resume
+            # because the SDK already loaded that turn (and everything
+            # after it) from the S3 transcript.
+            if not self._is_resumed:
+                await self._run_one_turn(self.initial_prompt, is_initial=True)
+            else:
+                self._logger.info("chat_session.resumed_skipping_initial_turn")
 
             # Subsequent turns: pull from the Redis input queue.
             while self._close_requested is None:

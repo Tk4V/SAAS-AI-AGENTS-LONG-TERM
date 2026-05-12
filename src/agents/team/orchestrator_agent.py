@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -123,10 +122,38 @@ class OrchestratorAgent(SDKAgent):
             attempt=state.get("attempt", 0),
         )
 
-        workspace_path = Path(tempfile.mkdtemp(prefix=f"clyde_{task_id_raw}_"))
+        # Deterministic workspace path so a resume after container destroy
+        # ends up with the SAME absolute paths the SDK transcript already
+        # references — agent doesn't have to mentally rebase its tool
+        # history onto a new directory. Stale leftovers (from a previous
+        # run that didn't get to clean up) are wiped first.
+        workspace_path = Path("/tmp/clyde") / str(task_id_raw)
+        if workspace_path.exists():
+            shutil.rmtree(workspace_path, ignore_errors=True)
+        workspace_path.mkdir(parents=True, exist_ok=True)
+
         cloned_repos: list[dict[str, Any]] = []
         primary_repo_path = workspace_path
         primary_repo_name: str | None = None
+
+        # On resume we re-clone the FEATURE branch (not default) so the
+        # working tree matches the last auto-publish push — which is the
+        # most recent committed state the agent thinks it's looking at.
+        # branch_names live in task.state JSONB (populated by the
+        # post-turn callback after the publisher's first push), not in
+        # the initial-state dict the resume coroutine assembles.
+        resume_session_id_raw = state.get("resume_session_id")
+        is_resume = resume_session_id_raw is not None
+        previous_branches: dict[str, str] = {}
+        if is_resume:
+            from src.db.queries.task_query import TaskRepository as _TaskRepo
+            async with db.session_scope() as session:
+                _task_for_branches = await _TaskRepo(session).get(
+                    user_id=user_id, task_id=task_id_uuid,
+                )
+                previous_branches = dict(
+                    (_task_for_branches.state or {}).get("branch_names") or {}
+                )
 
         try:
             if repositories:
@@ -135,6 +162,7 @@ class OrchestratorAgent(SDKAgent):
                     github_token=github_token,
                     repositories=repositories,
                     workspace_path=workspace_path,
+                    branch_overrides=previous_branches,
                 )
                 primary_repo_path = Path(cloned_repos[0]["local_path"])
                 primary_repo_name = cloned_repos[0]["name"]
@@ -150,26 +178,46 @@ class OrchestratorAgent(SDKAgent):
             # post-turn callback (which loads the task fresh on every
             # turn) can find the cloned tree.
             from src.db.queries.task_query import TaskRepository
+            from uuid import uuid4
+
+            # SDK session ID lifecycle:
+            #   * If ``state["resume_session_id"]`` is set, the startup
+            #     hook is reviving a session that died with a previous
+            #     container — pass it as ``resume_session_id`` so the SDK
+            #     loads the transcript from S3.
+            #   * Otherwise generate a fresh UUID, persist it on the task
+            #     row, and pass it as ``session_id`` so subsequent
+            #     restarts know how to resume.
+            resume_session_id_raw = state.get("resume_session_id")
+            resume_session_id = (
+                UUID(resume_session_id_raw)
+                if isinstance(resume_session_id_raw, str)
+                else resume_session_id_raw
+            )
+            new_session_id = uuid4() if resume_session_id is None else None
+
             async with db.session_scope() as session:
                 task_repo = TaskRepository(session)
                 task = await task_repo.get(user_id=user_id, task_id=task_id_uuid)
+                state_patch = {
+                    "workspace_path": str(workspace_path),
+                    "repos": cloned_repos,
+                    "primary_repo_name": primary_repo_name,
+                }
                 await task_repo.update_status(
-                    task=task, status=task.status,
-                    state_patch={
-                        "workspace_path": str(workspace_path),
-                        "repos": cloned_repos,
-                        "primary_repo_name": primary_repo_name,
-                    },
+                    task=task, status=task.status, state_patch=state_patch,
                 )
+                if new_session_id is not None:
+                    task.sdk_session_id = new_session_id
+                    await session.flush()
 
-            # The post-turn callback is wired up by ``task_service`` after
-            # this method returns the session config — it has visibility
-            # into the publisher, while this agent does not.
             chat_session = await self.build_chat_session(
                 initial_prompt=description,
                 working_directory=primary_repo_path,
                 task_id=task_id_uuid,
                 user_id=user_id,
+                session_id=new_session_id,
+                resume_session_id=resume_session_id,
                 mcp_context={
                     "user_id": user_id,
                     "task_node_id": task_node_id,
@@ -318,8 +366,17 @@ class OrchestratorAgent(SDKAgent):
         github_token: str,
         repositories: list[dict[str, Any]],
         workspace_path: Path,
+        branch_overrides: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Clone all task repositories concurrently into the workspace directory."""
+        """Clone all task repositories concurrently into the workspace directory.
+
+        ``branch_overrides`` is consulted on resume — if the previous
+        container's auto-publisher had already pushed a feature branch
+        for a given repo, we clone THAT branch instead of the default so
+        the working tree matches the last committed state of the
+        conversation.
+        """
+        overrides = branch_overrides or {}
 
         async def clone_one(repository: dict[str, Any]) -> dict[str, Any]:
             url = repository.get("url")
@@ -327,7 +384,11 @@ class OrchestratorAgent(SDKAgent):
                 raise PipelineError("Repository entry is missing the 'url' field.")
 
             coordinates = GitHubGitOps.parse_repo_url(url)
-            branch = repository.get("default_branch") or "main"
+            default_branch = repository.get("default_branch") or "main"
+            # Prefer the previous feature branch if we already have one
+            # from a prior turn — that's where the agent's work actually
+            # lives. Falls back to default branch on a fresh start.
+            branch = overrides.get(coordinates.name) or default_branch
             cloned = await GitHubGitOps.clone(
                 coordinates=coordinates,
                 token=github_token,
@@ -338,7 +399,7 @@ class OrchestratorAgent(SDKAgent):
             return {
                 "name": coordinates.name,
                 "url": url,
-                "default_branch": branch,
+                "default_branch": default_branch,
                 "local_path": str(cloned.local_path),
                 "branch": cloned.branch,
                 "head_commit": cloned.head_commit,

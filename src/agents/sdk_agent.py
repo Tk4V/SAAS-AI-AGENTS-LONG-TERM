@@ -150,6 +150,8 @@ class SDKAgent(BaseAgent):
         mcp_context: dict[str, Any] | None = None,
         extra_allowed_tools: list[str] | None = None,
         task_id: "UUID | None" = None,
+        session_id: "UUID | None" = None,
+        resume_session_id: "UUID | None" = None,
     ) -> Any:
         """Assemble ``ClaudeAgentOptions`` for either one-shot or chat-mode runs.
 
@@ -212,6 +214,22 @@ class SDKAgent(BaseAgent):
             }
             options_kwargs["permission_mode"] = "default"
 
+        # SDK session persistence (CA-113-resume). When the deployment has
+        # an S3 bucket configured we point the SDK at our S3SessionStore
+        # so the JSONL transcript survives container destroy. session_id
+        # / resume gives the same conversation a stable identity across
+        # restarts; on the very first turn we pass session_id (fresh
+        # conversation), on subsequent process starts we pass resume.
+        from src.config import get_settings
+        settings = get_settings()
+        if settings.s3_sessions_bucket:
+            from src.agents.chat.s3_session_store import S3SessionStore
+            options_kwargs["session_store"] = S3SessionStore()
+        if resume_session_id is not None:
+            options_kwargs["resume"] = str(resume_session_id)
+        elif session_id is not None:
+            options_kwargs["session_id"] = str(session_id)
+
         return ClaudeAgentOptions(**options_kwargs)
 
     async def build_chat_session(
@@ -221,17 +239,20 @@ class SDKAgent(BaseAgent):
         working_directory: Path,
         task_id: UUID,
         user_id: int,
+        session_id: UUID | None = None,
+        resume_session_id: UUID | None = None,
         mcp_context: dict[str, Any] | None = None,
         extra_allowed_tools: list[str] | None = None,
         post_turn_callback: Any | None = None,
     ) -> Any:
         """Construct a persistent ``SDKChatSession`` bound to this agent.
 
-        Returns the session — caller is responsible for awaiting
-        ``session.run()`` (or registering it with ``chat_session_service``).
-        The returned session reuses the same options the one-shot
-        ``run_sdk_session`` would have used, so hooks, MCP servers, and
-        subagents are identical between the two modes.
+        ``session_id`` — when set on the first turn, the SDK uses it as
+        the durable identity of the conversation in S3.
+        ``resume_session_id`` — when set, the SDK loads the prior
+        transcript and resumes mid-conversation. Mutually exclusive with
+        ``session_id`` from the SDK's perspective; we route to the right
+        ClaudeAgentOptions field in ``_prepare_sdk_options``.
         """
         from src.agents.chat.session import SDKChatSession
 
@@ -240,6 +261,8 @@ class SDKAgent(BaseAgent):
             mcp_context={**(mcp_context or {}), "task_id": str(task_id)},
             extra_allowed_tools=extra_allowed_tools,
             task_id=task_id,
+            session_id=session_id,
+            resume_session_id=resume_session_id,
         )
         return SDKChatSession(
             task_id=task_id,
@@ -248,6 +271,7 @@ class SDKAgent(BaseAgent):
             initial_prompt=initial_prompt,
             options=options,
             post_turn_callback=post_turn_callback,
+            is_resumed=resume_session_id is not None,
         )
 
     async def run_sdk_session(
