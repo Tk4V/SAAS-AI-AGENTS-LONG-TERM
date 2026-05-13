@@ -1,169 +1,105 @@
-"""HTTP helpers for the Azure skill server.
+"""Subprocess helpers for the Azure skill server.
 
-Lower-level ``httpx`` calls used by the tool classes in ``tools.py``.
-Kept separate so the tool layer stays declarative and the HTTP layer can
-be tested in isolation.
+Runs `az` CLI commands with service principal credentials injected as
+environment variables. Requires the Azure CLI to be installed and on PATH.
+Authentication state is set per-subprocess via env vars — no persistent
+`~/.azure/` session is needed after `connect_azure` establishes the login.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import os
+import subprocess
 
-import httpx
-
-from src.config.settings import get_settings
-
-DEFAULT_TIMEOUT_SEC = 30
-DEFAULT_TAIL_LINES_PER_OPERATION = 50
-_API_VERSION = "2021-04-01"
+DEFAULT_TIMEOUT_SEC = 60
 
 
-async def fetch_subscriptions(
-    *,
-    token: str,
-    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
-) -> list[dict[str, Any]]:
-    """Return all subscriptions the token can see.
-
-    Each item contains at least ``subscriptionId``, ``displayName``, and
-    ``state``. Returns an empty list on error, surfacing the reason as a
-    single item with an ``error`` key.
-    """
-    api_base = get_settings().azure_management_api_base
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{api_base}/subscriptions?api-version={_API_VERSION}"
-
-    async with httpx.AsyncClient(timeout=timeout_sec, follow_redirects=True) as client:
-        try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            return [{"error": f"Failed to list subscriptions: {exc}"}]
-        return response.json().get("value", [])
-
-
-async def fetch_resource_groups(
-    *,
-    token: str,
-    subscription_id: str,
-    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
-) -> list[dict[str, Any]]:
-    """Return all resource groups in a subscription.
-
-    Each item contains at least ``name``, ``location``, and
-    ``properties.provisioningState``. Returns a list with a single error
-    item if the request fails.
-    """
-    api_base = get_settings().azure_management_api_base
-    headers = {"Authorization": f"Bearer {token}"}
-    url = (
-        f"{api_base}/subscriptions/{subscription_id}"
-        f"/resourcegroups?api-version={_API_VERSION}"
+def _az_env(credentials: dict[str, str]) -> dict[str, str]:
+    """Copy the process environment and inject service principal credentials."""
+    env = os.environ.copy()
+    env.update(
+        {
+            "AZURE_CLIENT_ID": credentials["client_id"],
+            "AZURE_CLIENT_SECRET": credentials["client_secret"],
+            "AZURE_TENANT_ID": credentials["tenant_id"],
+        }
     )
-
-    async with httpx.AsyncClient(timeout=timeout_sec, follow_redirects=True) as client:
-        try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            return [{"error": f"Failed to list resource groups: {exc}"}]
-        return response.json().get("value", [])
+    return env
 
 
-async def fetch_virtual_machines(
+async def run_az(
+    args: list[str],
+    credentials: dict[str, str],
     *,
-    token: str,
-    subscription_id: str,
-    resource_group: str | None = None,
-    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
-) -> list[dict[str, Any]]:
-    """Return VMs in a subscription, optionally filtered to one resource group.
-
-    Each item contains at least ``name``, ``location``, ``id``, and
-    ``properties``. Returns a list with a single error item on failure.
-    """
-    api_base = get_settings().azure_management_api_base
-    headers = {"Authorization": f"Bearer {token}"}
-
-    if resource_group:
-        url = (
-            f"{api_base}/subscriptions/{subscription_id}"
-            f"/resourceGroups/{resource_group}"
-            f"/providers/Microsoft.Compute/virtualMachines"
-            f"?api-version=2024-03-01"
-        )
-    else:
-        url = (
-            f"{api_base}/subscriptions/{subscription_id}"
-            f"/providers/Microsoft.Compute/virtualMachines"
-            f"?api-version=2024-03-01"
-        )
-
-    async with httpx.AsyncClient(timeout=timeout_sec, follow_redirects=True) as client:
-        try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            return [{"error": f"Failed to list virtual machines: {exc}"}]
-        return response.json().get("value", [])
-
-
-async def fetch_failed_deployment_logs(
-    *,
-    token: str,
-    subscription_id: str,
-    resource_group: str,
-    deployment_name: str,
-    max_operations: int = DEFAULT_TAIL_LINES_PER_OPERATION,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
 ) -> str:
-    """Return error details from a failed ARM deployment.
+    """Run ``az <args>`` with service principal env vars injected.
 
-    Fetches the deployment operations list and returns the status messages
-    from every failed operation, trimmed to ``max_operations`` entries.
-    Errors at any step are surfaced as diagnostic text.
+    Appends ``--output json`` automatically unless the caller already
+    specified ``--output`` or ``-o``, so output is structured by default.
+    On non-zero exit, stderr is returned as a diagnostic string rather than
+    raised so the agent can see the error and self-correct.
     """
-    api_base = get_settings().azure_management_api_base
-    headers = {"Authorization": f"Bearer {token}"}
-    ops_url = (
-        f"{api_base}/subscriptions/{subscription_id}"
-        f"/resourceGroups/{resource_group}"
-        f"/providers/Microsoft.Resources/deployments/{deployment_name}"
-        f"/operations?api-version={_API_VERSION}"
+    effective_args = list(args)
+    if "--output" not in effective_args and "-o" not in effective_args:
+        effective_args += ["--output", "json"]
+
+    process = await asyncio.create_subprocess_exec(
+        "az",
+        *effective_args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_az_env(credentials),
     )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=timeout_sec
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        return f"(az command timed out after {timeout_sec}s: az {' '.join(effective_args)})"
 
-    async with httpx.AsyncClient(timeout=timeout_sec, follow_redirects=True) as client:
-        try:
-            ops_response = await client.get(ops_url, headers=headers)
-            ops_response.raise_for_status()
-        except httpx.HTTPError as exc:
-            return f"(failed to fetch deployment operations for '{deployment_name}': {exc})"
+    if process.returncode != 0:
+        return f"(az error, exit {process.returncode}):\n{stderr.decode()}"
 
-        operations = ops_response.json().get("value", [])
-        failed_ops = [
-            op
-            for op in operations
-            if op.get("properties", {}).get("provisioningState") == "Failed"
-        ]
+    return stdout.decode()
 
-        if not failed_ops:
-            return (
-                f"(no failed operations found for deployment '{deployment_name}'; "
-                f"the deployment may still be in progress or failed at the submission stage)"
-            )
 
-        sections = []
-        for op in failed_ops[:max_operations]:
-            props = op.get("properties", {})
-            resource_type = props.get("targetResource", {}).get("resourceType", "unknown")
-            resource_name = props.get("targetResource", {}).get("resourceName", "unknown")
-            status_code = props.get("statusCode", "unknown")
-            status_message = props.get("statusMessage", {})
-            error = status_message.get("error", status_message) if isinstance(status_message, dict) else status_message
-            sections.append(
-                f"### Operation: {resource_type}/{resource_name}\n"
-                f"Status: {status_code}\n"
-                f"Error: {error}"
-            )
+async def connect_azure(
+    credentials: dict[str, str],
+    *,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+) -> str:
+    """Run ``az login --service-principal`` then ``az account set``.
 
-    return "\n\n".join(sections)
+    Returns a human-readable success or failure message.
+    """
+    login_result = await run_az(
+        [
+            "login",
+            "--service-principal",
+            "-u", credentials["client_id"],
+            "-p", credentials["client_secret"],
+            "--tenant", credentials["tenant_id"],
+            "--output", "none",
+        ],
+        credentials,
+        timeout_sec=timeout_sec,
+    )
+    if "az error" in login_result:
+        return f"Login failed: {login_result}"
+
+    set_result = await run_az(
+        [
+            "account", "set",
+            "--subscription", credentials["subscription_id"],
+            "--output", "none",
+        ],
+        credentials,
+        timeout_sec=timeout_sec,
+    )
+    if "az error" in set_result:
+        return f"Login succeeded but setting subscription failed: {set_result}"
+
+    return f"Connected. Subscription {credentials['subscription_id']!r} is active."

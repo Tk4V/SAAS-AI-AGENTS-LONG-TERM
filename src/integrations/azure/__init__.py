@@ -1,9 +1,6 @@
-"""Azure integration: OAuth config.
+"""Azure integration — auth via az CLI service principal.
 
-Whatever the rest of the codebase needs from "the Azure integration"
-re-exports here.
+Credentials (client_id, client_secret, tenant_id, subscription_id) are
+stored as a BEARER JSON credential and passed to the in-process
+``clyde_azure`` MCP server at session start. No OAuth flow is used.
 """
-
-from src.integrations.azure.config import AZURE
-
-__all__ = ["AZURE"]

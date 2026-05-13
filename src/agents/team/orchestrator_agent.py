@@ -302,12 +302,12 @@ class OrchestratorAgent(SDKAgent):
                 github_token=github_token,
             )
         try:
-            azure_token = await self.resolve_azure_token(user_id=user_id)
+            azure_credentials = await self.resolve_azure_credentials(user_id=user_id)
         except Exception:
             pass
         else:
             servers[CLYDE_AZURE_SERVER_NAME] = build_azure_skills_server(
-                azure_token=azure_token,
+                credentials=azure_credentials,
             )
         return servers
 

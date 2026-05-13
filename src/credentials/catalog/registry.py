@@ -191,9 +191,16 @@ PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
         name="Azure",
         category=ProviderCategory.CLOUD,
         api_base_url="https://management.azure.com",
-        docs_url="https://learn.microsoft.com/en-us/rest/api/azure/",
+        docs_url="https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli",
         auth_methods=(
-            AuthMethod(kind=AuthMethodKind.OAUTH, provider_id="azure"),
+            AuthMethod(
+                kind=AuthMethodKind.BEARER,
+                token_creation_url="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps",
+                token_format_hint='{"client_id": "...", "client_secret": "...", "tenant_id": "...", "subscription_id": "..."}',
+                header_name="Authorization",
+                placement="header",
+                prefix="",
+            ),
         ),
     ),
 )

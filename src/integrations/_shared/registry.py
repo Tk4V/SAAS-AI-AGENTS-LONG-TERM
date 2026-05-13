@@ -14,7 +14,6 @@ from src.integrations._shared.config import OAuthProviderConfig
 from src.integrations._shared.exceptions import ProviderConfigError
 from src.integrations._shared.kinds import IntegrationCategory, IntegrationKind
 from src.integrations.aws.config import AWS
-from src.integrations.azure.config import AZURE
 from src.integrations.github.config import GITHUB
 from src.integrations.google.config import GOOGLE
 from src.integrations.jira.config import JIRA
@@ -26,7 +25,6 @@ _PROVIDERS: tuple[OAuthProviderConfig, ...] = (
     GOOGLE,
     SLACK,
     AWS,
-    AZURE,
     # Add new providers here. One line per provider.
     # DISCORD,
     # SENTRY,

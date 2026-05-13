@@ -143,11 +143,36 @@ class BaseAgent(ABC):
             user_id=user_id, provider=ProviderKind.GITHUB
         )
 
-    async def resolve_azure_token(self, *, user_id: int) -> str:
-        """Fetch the user's Azure AD OAuth access token."""
-        return await self._token_provider.get_access_token(
-            user_id=user_id, provider=ProviderKind.AZURE
-        )
+    async def resolve_azure_credentials(self, *, user_id: int) -> dict[str, str]:
+        """Fetch Azure service principal credentials from the BEARER credential store.
+
+        Expects a credential with ``metadata_json["provider"] == "azure"`` whose
+        encrypted token is a JSON string:
+        ``{"client_id": "...", "client_secret": "...", "tenant_id": "...", "subscription_id": "..."}``.
+
+        Raises ``ValueError`` if no active Azure credential exists for this user.
+        """
+        async with db.session_scope() as session:
+            cred_repo = CredentialRepository(session)
+            bearer_creds = await cred_repo.list_active_bearer_with_provider(user_id=user_id)
+            azure_cred = next(
+                (c for c in bearer_creds if c.metadata_json.get("provider") == "azure"),
+                None,
+            )
+            if azure_cred is None:
+                raise ValueError("No active Azure credential found for user.")
+            resolver = CredentialResolver(
+                repo=cred_repo,
+                cipher=self._ctx.cipher,
+                kinds=get_kind_registry(),
+                auditor=CredentialAuditor(CredentialEventRepository(session)),
+            )
+            resolved = await resolver.resolve(
+                user_id=user_id,
+                credential_id=azure_cred.id,
+                purpose="azure_cli",
+            )
+        return json.loads(resolved.payload.token)
 
     async def build_in_process_mcp_servers(
         self,
