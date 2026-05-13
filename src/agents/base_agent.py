@@ -143,6 +143,12 @@ class BaseAgent(ABC):
             user_id=user_id, provider=ProviderKind.GITHUB
         )
 
+    async def resolve_azure_token(self, *, user_id: int) -> str:
+        """Fetch the user's Azure AD OAuth access token."""
+        return await self._token_provider.get_access_token(
+            user_id=user_id, provider=ProviderKind.AZURE
+        )
+
     async def build_in_process_mcp_servers(
         self,
         user_id: int | None,

@@ -186,6 +186,16 @@ PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
             ),
         ),
     ),
+    ProviderCatalogEntry(
+        id="azure",
+        name="Azure",
+        category=ProviderCategory.CLOUD,
+        api_base_url="https://management.azure.com",
+        docs_url="https://learn.microsoft.com/en-us/rest/api/azure/",
+        auth_methods=(
+            AuthMethod(kind=AuthMethodKind.OAUTH, provider_id="azure"),
+        ),
+    ),
 )
 
 

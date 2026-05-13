@@ -20,6 +20,10 @@ from claude_agent_sdk import AgentDefinition
 
 from src.agent_tools.custom_tools.memory.graph_writer import GraphWriter
 from src.agent_tools.custom_tools.memory.mcp_server import create_memory_mcp_server
+from src.agent_tools.custom_tools.azure import (
+    CLYDE_AZURE_SERVER_NAME,
+    build_azure_skills_server,
+)
 from src.agent_tools.custom_tools.github import (
     CLYDE_GITHUB_SERVER_NAME,
     build_github_skills_server,
@@ -292,10 +296,19 @@ class OrchestratorAgent(SDKAgent):
         try:
             github_token = await self.resolve_github_token(user_id=user_id)
         except Exception:
-            return servers
-        servers[CLYDE_GITHUB_SERVER_NAME] = build_github_skills_server(
-            github_token=github_token,
-        )
+            pass
+        else:
+            servers[CLYDE_GITHUB_SERVER_NAME] = build_github_skills_server(
+                github_token=github_token,
+            )
+        try:
+            azure_token = await self.resolve_azure_token(user_id=user_id)
+        except Exception:
+            pass
+        else:
+            servers[CLYDE_AZURE_SERVER_NAME] = build_azure_skills_server(
+                azure_token=azure_token,
+            )
         return servers
 
     async def build_subagents(self, context: dict[str, Any]) -> dict[str, Any]:

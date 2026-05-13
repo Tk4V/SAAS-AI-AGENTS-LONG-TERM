@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     aws_mcp_url: str = "https://aws-mcp.us-east-1.api.aws/mcp"
     aws_mcp_proxy_base_url: str = "http://127.0.0.1:8000"
 
+    azure_oauth_client_id: SecretStr = SecretStr("")
+    azure_oauth_client_secret: SecretStr = SecretStr("")
+    azure_management_api_base: str = "https://management.azure.com"
+    azure_mcp_url: str = ""
+
     oauth_state_ttl_sec: int = 600
     oauth_callback_base_url: str = "http://localhost:8000"
     frontend_redirect_url: str = "http://localhost:3000/integrations"
