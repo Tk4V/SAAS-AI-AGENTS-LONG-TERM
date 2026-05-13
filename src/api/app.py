@@ -23,6 +23,7 @@ from src.api.views import (
     agents_view,
     credentials_oauth_view,
     credentials_view,
+    github_view,
     health_view,
     mcp_aws_proxy_view,
     projects_view,
@@ -196,6 +197,7 @@ class Application:
         app.include_router(credentials_view.router, prefix=prefix)
         app.include_router(credentials_oauth_view.router, prefix=prefix)
         app.include_router(providers_view.router, prefix=prefix)
+        app.include_router(github_view.router, prefix=prefix)
         app.include_router(tools_view.router, prefix=prefix)
         app.include_router(subagents_view.router, prefix=prefix)
         app.include_router(subagents_admin_view.router, prefix=prefix)
