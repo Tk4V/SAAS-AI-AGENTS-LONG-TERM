@@ -143,6 +143,12 @@ class BaseAgent(ABC):
             user_id=user_id, provider=ProviderKind.GITHUB
         )
 
+    async def resolve_google_token(self, *, user_id: int) -> str:
+        """Fetch the user's Google OAuth access token."""
+        return await self._token_provider.get_access_token(
+            user_id=user_id, provider=ProviderKind.GOOGLE
+        )
+
     async def resolve_azure_credentials(self, *, user_id: int) -> dict[str, str]:
         """Fetch Azure service principal credentials from the BEARER credential store.
 

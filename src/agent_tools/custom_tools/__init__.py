@@ -20,10 +20,16 @@ from src.agent_tools.custom_tools.chat import (
     build_chat_skills_server,
 )
 from src.agent_tools.custom_tools.github import build_github_skills_server
+from src.agent_tools.custom_tools.google import (
+    CLYDE_GOOGLE_SERVER_NAME,
+    build_google_skills_server,
+)
 
 __all__ = [
     "CLYDE_CHAT_SERVER_NAME",
+    "CLYDE_GOOGLE_SERVER_NAME",
     "build_azure_skills_server",
     "build_chat_skills_server",
     "build_github_skills_server",
+    "build_google_skills_server",
 ]
