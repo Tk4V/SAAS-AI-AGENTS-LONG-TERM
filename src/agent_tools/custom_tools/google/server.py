@@ -1,9 +1,9 @@
-"""Build the in-process ``clyde_google`` MCP server.
+"""Build the in-process ``google`` MCP server.
 
 Public entry point used by ``OrchestratorAgent.build_in_process_mcp_servers`` —
 ``build_google_skills_server(google_token=...)`` returns an
 ``McpSdkServerConfig`` keyed by ``CLYDE_GOOGLE_SERVER_NAME`` so the SDK
-mounts every tool declared in ``tools.py`` under ``mcp__clyde_google__*``.
+mounts every tool declared in ``tools.py`` under ``mcp__google__*``.
 
 Authentication uses the user's Google OAuth access token stored in the
 credentials table. The token is passed to each tool at construction time.
@@ -26,7 +26,7 @@ from src.agent_tools.custom_tools.google.tools import (
 )
 from src.agent_tools.custom_tools.mcp_server_builder import build_mcp_server
 
-CLYDE_GOOGLE_SERVER_NAME = "clyde_google"
+CLYDE_GOOGLE_SERVER_NAME = "google"
 
 
 def build_google_skills_server(*, google_token: str) -> Any:

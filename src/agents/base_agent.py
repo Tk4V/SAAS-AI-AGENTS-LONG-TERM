@@ -168,7 +168,7 @@ class BaseAgent(ABC):
             if azure_cred is None:
                 raise ValueError("No active Azure credential found for user.")
             resolver = CredentialResolver(
-                repo=cred_repo,
+                repository=cred_repo,
                 cipher=self._ctx.cipher,
                 kinds=get_kind_registry(),
                 auditor=CredentialAuditor(CredentialEventRepository(session)),
