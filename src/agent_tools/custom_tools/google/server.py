@@ -19,7 +19,10 @@ from src.agent_tools.custom_tools.google.tools import (
     CreateMeetMeetingTool,
     GetEmailTool,
     ListCalendarEventsTool,
+    ListCalendarInvitesTool,
+    RespondToCalendarInviteTool,
     SearchEmailsTool,
+    SendEmailTool,
 )
 from src.agent_tools.custom_tools.mcp_server_builder import build_mcp_server
 
@@ -40,7 +43,10 @@ def build_google_skills_server(*, google_token: str) -> Any:
             SearchEmailsTool(google_token),
             GetEmailTool(google_token),
             CreateDraftTool(google_token),
+            SendEmailTool(google_token),
             ListCalendarEventsTool(google_token),
+            ListCalendarInvitesTool(google_token),
+            RespondToCalendarInviteTool(google_token),
             CreateCalendarEventTool(google_token),
             CreateMeetMeetingTool(google_token),
         ],

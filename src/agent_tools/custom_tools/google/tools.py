@@ -9,6 +9,7 @@ Tools exposed:
     - search_emails      — search inbox threads by query
     - get_email          — fetch a specific thread by ID
     - create_draft       — create a draft email
+    - send_email         — send an email immediately
   Calendar:
     - create_calendar_event   — create an event with optional attendees
     - list_calendar_events    — list upcoming events in a date range
@@ -167,6 +168,53 @@ class CreateDraftTool(BaseSkillTool):
             return _ok(f"Draft created successfully (id={draft_id}). It is ready in the Gmail Drafts folder for review and sending.")
 
 
+class SendEmailTool(BaseSkillTool):
+    name: ClassVar[str] = "send_email"
+    description: ClassVar[str] = (
+        "Send an email immediately via Gmail. "
+        "Use this when the user explicitly wants to send an email right away. "
+        "For emails that need review first, use create_draft instead."
+    )
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string", "description": "Recipient email address"},
+            "subject": {"type": "string", "description": "Email subject line"},
+            "body": {"type": "string", "description": "Plain text email body"},
+            "cc": {"type": "string", "description": "CC email address (optional)"},
+        },
+        "required": ["to", "subject", "body"],
+    }
+
+    def __init__(self, google_token: str) -> None:
+        self._token = google_token
+
+    async def run(self, args: dict[str, Any]) -> dict[str, Any]:
+        import base64
+        to = args["to"]
+        subject = args["subject"]
+        body = args["body"]
+        cc = args.get("cc", "")
+
+        headers_str = f"To: {to}\r\nSubject: {subject}\r\n"
+        if cc:
+            headers_str += f"Cc: {cc}\r\n"
+        headers_str += "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        raw = base64.urlsafe_b64encode((headers_str + body).encode()).decode()
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{_GMAIL_BASE}/messages/send",
+                headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"},
+                json={"raw": raw},
+                timeout=15.0,
+            )
+            if r.status_code not in (200, 201):
+                return _err(f"Gmail API error {r.status_code}: {r.text[:300]}")
+            msg_id = r.json().get("id")
+            return _ok(f"Email sent successfully to {to} (message id={msg_id}).")
+
+
 # ── Calendar ──────────────────────────────────────────────────────────────────
 
 
@@ -220,6 +268,129 @@ class ListCalendarEventsTool(BaseSkillTool):
                     line += f"\n  Meet: {meet}"
                 lines.append(line)
             return _ok("\n\n".join(lines))
+
+
+class ListCalendarInvitesTool(BaseSkillTool):
+    name: ClassVar[str] = "list_calendar_invites"
+    description: ClassVar[str] = (
+        "List Google Calendar events where you were invited by someone else "
+        "(i.e. you are an attendee, not the organizer). "
+        "Shows pending, accepted, and declined invites with their response status."
+    )
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "time_min": {"type": "string", "description": "Start of range in RFC3339 format e.g. '2026-05-20T00:00:00Z'"},
+            "time_max": {"type": "string", "description": "End of range in RFC3339 format e.g. '2026-05-27T00:00:00Z'"},
+            "max_results": {"type": "integer", "description": "Max events to return (default 20)", "default": 20},
+        },
+        "required": ["time_min", "time_max"],
+    }
+
+    def __init__(self, google_token: str) -> None:
+        self._token = google_token
+
+    async def run(self, args: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{_CALENDAR_BASE}/calendars/primary/events",
+                headers={"Authorization": f"Bearer {self._token}"},
+                params={
+                    "timeMin": args["time_min"],
+                    "timeMax": args["time_max"],
+                    "maxResults": args.get("max_results", 20),
+                    "singleEvents": "true",
+                    "orderBy": "startTime",
+                },
+                timeout=15.0,
+            )
+            if r.status_code != 200:
+                return _err(f"Calendar API error {r.status_code}: {r.text[:300]}")
+
+            events = r.json().get("items", [])
+            # Filter to events where self is an attendee (not organizer)
+            invites = [
+                e for e in events
+                if e.get("attendees") and not e.get("organizer", {}).get("self", False)
+            ]
+            if not invites:
+                return _ok("No calendar invites found in the given range.")
+
+            lines = []
+            for e in invites:
+                start = e.get("start", {}).get("dateTime", e.get("start", {}).get("date", "?"))
+                organizer = e.get("organizer", {}).get("email", "?")
+                my_status = next(
+                    (a.get("responseStatus", "?") for a in e.get("attendees", []) if a.get("self")),
+                    "unknown",
+                )
+                meet = e.get("hangoutLink", "")
+                line = (
+                    f"• {e.get('summary', 'No title')} — {start}\n"
+                    f"  Organizer: {organizer} | Your response: {my_status}\n"
+                    f"  Event ID: {e.get('id')}"
+                )
+                if meet:
+                    line += f"\n  Meet: {meet}"
+                lines.append(line)
+            return _ok(f"Found {len(invites)} invite(s):\n\n" + "\n\n".join(lines))
+
+
+class RespondToCalendarInviteTool(BaseSkillTool):
+    name: ClassVar[str] = "respond_to_calendar_invite"
+    description: ClassVar[str] = (
+        "Accept, decline, or tentatively accept a Google Calendar invite. "
+        "Use list_calendar_invites to find the event ID first."
+    )
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "Google Calendar event ID"},
+            "response": {
+                "type": "string",
+                "enum": ["accepted", "declined", "tentative"],
+                "description": "Your response to the invite",
+            },
+        },
+        "required": ["event_id", "response"],
+    }
+
+    def __init__(self, google_token: str) -> None:
+        self._token = google_token
+
+    async def run(self, args: dict[str, Any]) -> dict[str, Any]:
+        event_id = args["event_id"]
+        response = args["response"]
+        headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
+
+        async with httpx.AsyncClient() as client:
+            # Fetch event to get current attendees list
+            r = await client.get(
+                f"{_CALENDAR_BASE}/calendars/primary/events/{event_id}",
+                headers=headers,
+                timeout=15.0,
+            )
+            if r.status_code != 200:
+                return _err(f"Calendar API error {r.status_code}: {r.text[:300]}")
+            event = r.json()
+
+            # Update self attendee response status
+            attendees = event.get("attendees", [])
+            for a in attendees:
+                if a.get("self"):
+                    a["responseStatus"] = response
+
+            # Patch the event
+            r2 = await client.patch(
+                f"{_CALENDAR_BASE}/calendars/primary/events/{event_id}",
+                headers=headers,
+                params={"sendUpdates": "all"},
+                json={"attendees": attendees},
+                timeout=15.0,
+            )
+            if r2.status_code != 200:
+                return _err(f"Calendar API error {r2.status_code}: {r2.text[:300]}")
+            return _ok(f"Successfully responded '{response}' to '{event.get('summary')}'. Organizer has been notified.")
 
 
 class CreateCalendarEventTool(BaseSkillTool):
