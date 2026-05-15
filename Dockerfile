@@ -34,14 +34,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app
 
-# Runtime libraries + Node.js (required by Claude Agent SDK).
+# Runtime libraries + Node.js (required by Claude Agent SDK) + Azure CLI.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libpq5 \
         git \
         curl \
+        gnupg \
         nodejs \
         npm \
+    && curl -sL https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor \
+        | tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null \
+    && echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
+        > /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends azure-cli \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --create-home --shell /bin/bash app

@@ -39,7 +39,7 @@ class Credential(Base, UUIDPrimaryKeyMixin, UserScopeMixin, TimestampMixin):
     )
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
-    preview: Mapped[str] = mapped_column(String(64), nullable=False)
+    preview: Mapped[str] = mapped_column(String(512), nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,

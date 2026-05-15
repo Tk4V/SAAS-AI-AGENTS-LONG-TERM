@@ -28,6 +28,10 @@ from src.agent_tools.custom_tools.github import (
     CLYDE_GITHUB_SERVER_NAME,
     build_github_skills_server,
 )
+from src.agent_tools.custom_tools.google import (
+    CLYDE_GOOGLE_SERVER_NAME,
+    build_google_skills_server,
+)
 from src.agents.prompts.team.orchestrator_prompts import (
     BASE_SYSTEM_PROMPT as _ORCHESTRATOR_BASE_PROMPT,
     build_system_prompt as _build_orchestrator_prompt,
@@ -308,6 +312,14 @@ class OrchestratorAgent(SDKAgent):
         else:
             servers[CLYDE_AZURE_SERVER_NAME] = build_azure_skills_server(
                 credentials=azure_credentials,
+            )
+        try:
+            google_token = await self.resolve_google_token(user_id=user_id)
+        except Exception:
+            pass
+        else:
+            servers[CLYDE_GOOGLE_SERVER_NAME] = build_google_skills_server(
+                google_token=google_token,
             )
         return servers
 

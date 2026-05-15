@@ -143,6 +143,12 @@ class BaseAgent(ABC):
             user_id=user_id, provider=ProviderKind.GITHUB
         )
 
+    async def resolve_google_token(self, *, user_id: int) -> str:
+        """Fetch the user's Google OAuth access token."""
+        return await self._token_provider.get_access_token(
+            user_id=user_id, provider=ProviderKind.GOOGLE
+        )
+
     async def resolve_azure_credentials(self, *, user_id: int) -> dict[str, str]:
         """Fetch Azure service principal credentials from the BEARER credential store.
 
@@ -162,7 +168,7 @@ class BaseAgent(ABC):
             if azure_cred is None:
                 raise ValueError("No active Azure credential found for user.")
             resolver = CredentialResolver(
-                repo=cred_repo,
+                repository=cred_repo,
                 cipher=self._ctx.cipher,
                 kinds=get_kind_registry(),
                 auditor=CredentialAuditor(CredentialEventRepository(session)),
