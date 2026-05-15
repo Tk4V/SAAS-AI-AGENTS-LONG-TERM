@@ -17,11 +17,45 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent_tools.custom_tools.azure.tools import (
+    # Connection
     ConnectAzureTool,
-    ListResourceGroupsTool,
-    ListSubscriptionsTool,
-    ListVirtualMachinesTool,
     RunAzCommandTool,
+    # Discovery / read
+    ListSubscriptionsTool,
+    ListResourceGroupsTool,
+    ListVirtualMachinesTool,
+    # Resource group management
+    CreateResourceGroupTool,
+    DeleteResourceGroupTool,
+    # VM management
+    GetVirtualMachineTool,
+    CreateVirtualMachineTool,
+    StartVirtualMachineTool,
+    StopVirtualMachineTool,
+    RestartVirtualMachineTool,
+    DeleteVirtualMachineTool,
+    # Storage management
+    ListStorageAccountsTool,
+    CreateStorageAccountTool,
+    DeleteStorageAccountTool,
+    # App Service / Web App management
+    ListWebAppsTool,
+    CreateAppServicePlanTool,
+    CreateWebAppTool,
+    DeleteWebAppTool,
+    # AKS management
+    ListAksClustersTool,
+    CreateAksClusterTool,
+    GetAksCredentialsTool,
+    DeleteAksClusterTool,
+    # Container Registry management
+    ListContainerRegistriesTool,
+    CreateContainerRegistryTool,
+    DeleteContainerRegistryTool,
+    # Key Vault management
+    ListKeyVaultsTool,
+    CreateKeyVaultTool,
+    DeleteKeyVaultTool,
 )
 from src.agent_tools.custom_tools.mcp_server_builder import build_mcp_server
 
@@ -39,10 +73,44 @@ def build_azure_skills_server(*, credentials: dict[str, str]) -> Any:
         name=CLYDE_AZURE_SERVER_NAME,
         version="1.0.0",
         tools=[
+            # Connection
             ConnectAzureTool(credentials),
             RunAzCommandTool(credentials),
+            # Discovery / read
             ListSubscriptionsTool(credentials),
             ListResourceGroupsTool(credentials),
             ListVirtualMachinesTool(credentials),
+            # Resource group management
+            CreateResourceGroupTool(credentials),
+            DeleteResourceGroupTool(credentials),
+            # VM management
+            GetVirtualMachineTool(credentials),
+            CreateVirtualMachineTool(credentials),
+            StartVirtualMachineTool(credentials),
+            StopVirtualMachineTool(credentials),
+            RestartVirtualMachineTool(credentials),
+            DeleteVirtualMachineTool(credentials),
+            # Storage management
+            ListStorageAccountsTool(credentials),
+            CreateStorageAccountTool(credentials),
+            DeleteStorageAccountTool(credentials),
+            # App Service / Web App management
+            ListWebAppsTool(credentials),
+            CreateAppServicePlanTool(credentials),
+            CreateWebAppTool(credentials),
+            DeleteWebAppTool(credentials),
+            # AKS management
+            ListAksClustersTool(credentials),
+            CreateAksClusterTool(credentials),
+            GetAksCredentialsTool(credentials),
+            DeleteAksClusterTool(credentials),
+            # Container Registry management
+            ListContainerRegistriesTool(credentials),
+            CreateContainerRegistryTool(credentials),
+            DeleteContainerRegistryTool(credentials),
+            # Key Vault management
+            ListKeyVaultsTool(credentials),
+            CreateKeyVaultTool(credentials),
+            DeleteKeyVaultTool(credentials),
         ],
     )
